@@ -1,0 +1,119 @@
+{
+  "description": "SCE v2 known-answer vectors. Deterministic values for cross-language verification.",
+  "envelope_magic": "SCE2",
+  "aead": "AES-256-GCM-SIV (RFC 8452)",
+  "hash": "SHA3-256",
+  "kdf": "HKDF-SHA3-256",
+  "domain": "LDDP-SCE-v2",
+  "manifest_canonical_format": "SCEMAN1: tag, then each core field as uint32-BE length + NFC-UTF8 bytes (fixed order), then uint32-BE count of extra items, then each sorted key/value length-prefixed",
+  "commitment": "SHA3-256(DOMAIN|'commit'|HKDF_material[32:64]); key material = HKDF-SHA3-256(master, salt=epoch_be, info=DOMAIN|'kdf'|context|MEMH, len=64)",
+  "note": "nonce and ciphertext are randomised per seal and are NOT part of the KAT.",
+  "cases": [
+    {
+      "manifest": {
+        "weights_hash": "sha3:aaaa000011112222",
+        "quantization": "bf16",
+        "kernel_build_id": "vllm-0.6.3+build.a1b2c3",
+        "tensor_parallel": "tp=1,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {}
+      },
+      "canonical_manifest_hex": "5343454d414e3100000015736861333a61616161303030303131313132323232000000046266313600000017766c6c6d2d302e362e332b6275696c642e6131623263330000000974703d312c70703d31000000046266313600000000",
+      "memh_sha3_256_hex": "148cc03585015f7e58365ccbffc8ccab72a5d816385c417b4419be3eb4b713b6",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "",
+      "k_enc_hex": "753a76c8c16109677b1e7ff05c9603a032e9a3c8bae3a01c9cf76ef91d99d90e",
+      "key_commitment_hex": "fe8756894cc5067f39420314b3ea91bc065fad46ac54c41ae0bcd130dab7a2b5"
+    },
+    {
+      "manifest": {
+        "weights_hash": "sha3:aaaa000011112222",
+        "quantization": "bf16",
+        "kernel_build_id": "vllm-0.6.3+build.a1b2c3",
+        "tensor_parallel": "tp=1,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {}
+      },
+      "canonical_manifest_hex": "5343454d414e3100000015736861333a61616161303030303131313132323232000000046266313600000017766c6c6d2d302e362e332b6275696c642e6131623263330000000974703d312c70703d31000000046266313600000000",
+      "memh_sha3_256_hex": "148cc03585015f7e58365ccbffc8ccab72a5d816385c417b4419be3eb4b713b6",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "tenant-A",
+      "k_enc_hex": "677257aa8a2507be41da8f0e1fca2bb1652dbf60e7e0b71928cd241434a2246d",
+      "key_commitment_hex": "4e79eb034f85a6d51bc0094a292a32c5f3ea382fbcec3609a36d793eaf15b39f"
+    },
+    {
+      "manifest": {
+        "weights_hash": "sha3:aaaa000011112222",
+        "quantization": "fp8-e4m3",
+        "kernel_build_id": "vllm-0.6.3+build.a1b2c3",
+        "tensor_parallel": "tp=1,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {}
+      },
+      "canonical_manifest_hex": "5343454d414e3100000015736861333a61616161303030303131313132323232000000086670382d65346d3300000017766c6c6d2d302e362e332b6275696c642e6131623263330000000974703d312c70703d31000000046266313600000000",
+      "memh_sha3_256_hex": "1b7104c56a5c94e1f4e3135929c30344891e6f4e6766361b2b533b934f955deb",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "",
+      "k_enc_hex": "c03df48bcd0d651f03500cc2ae946c6f0bb5d4d5ee0a032f797424ccc4593889",
+      "key_commitment_hex": "92cb2634aa63f68aa89f27a3b06414867f5161f8d47a1d300a775b5701e5934c"
+    },
+    {
+      "manifest": {
+        "weights_hash": "sha3:aaaa000011112222",
+        "quantization": "fp8-e4m3",
+        "kernel_build_id": "vllm-0.6.3+build.a1b2c3",
+        "tensor_parallel": "tp=1,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {}
+      },
+      "canonical_manifest_hex": "5343454d414e3100000015736861333a61616161303030303131313132323232000000086670382d65346d3300000017766c6c6d2d302e362e332b6275696c642e6131623263330000000974703d312c70703d31000000046266313600000000",
+      "memh_sha3_256_hex": "1b7104c56a5c94e1f4e3135929c30344891e6f4e6766361b2b533b934f955deb",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "tenant-A",
+      "k_enc_hex": "8ced705f445a0bdd6f62942d3a1400cb5090e495f98c068d7389a53f522586cc",
+      "key_commitment_hex": "1cecaa14cbcfbfe1ec83329bc916ad0a4062b90e2a264d26a1de1dfb9cb460e0"
+    },
+    {
+      "manifest": {
+        "weights_hash": "sha3:aaaa000011112222",
+        "quantization": "bf16",
+        "kernel_build_id": "vllm-0.6.3+build.a1b2c3",
+        "tensor_parallel": "tp=2,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {
+          "lora": "adapter-42"
+        }
+      },
+      "canonical_manifest_hex": "5343454d414e3100000015736861333a61616161303030303131313132323232000000046266313600000017766c6c6d2d302e362e332b6275696c642e6131623263330000000974703d322c70703d31000000046266313600000001000000046c6f72610000000a616461707465722d3432",
+      "memh_sha3_256_hex": "993dc6d40b269aa6105311266cc8ef07284292db8bb6b3e920616592a08353d4",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "",
+      "k_enc_hex": "131ac96fb8bfc386573d5198552ab348df5f24d3da93b9349b8410058187a967",
+      "key_commitment_hex": "134c287cb95d8c0ccba7f63d1704208518b7861971bd62f7c7ea745d48162ed1"
+    },
+    {
+      "manifest": {
+        "weights_hash": "sha3:aaaa000011112222",
+        "quantization": "bf16",
+        "kernel_build_id": "vllm-0.6.3+build.a1b2c3",
+        "tensor_parallel": "tp=2,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {
+          "lora": "adapter-42"
+        }
+      },
+      "canonical_manifest_hex": "5343454d414e3100000015736861333a61616161303030303131313132323232000000046266313600000017766c6c6d2d302e362e332b6275696c642e6131623263330000000974703d322c70703d31000000046266313600000001000000046c6f72610000000a616461707465722d3432",
+      "memh_sha3_256_hex": "993dc6d40b269aa6105311266cc8ef07284292db8bb6b3e920616592a08353d4",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "tenant-A",
+      "k_enc_hex": "adcea1ab34b5ca36e5a5f402f539d1d6c73b01a669fc9e5d5f193d832c65ffbf",
+      "key_commitment_hex": "29435af02a4fa461300f853b9fb6278c7a9741f8f066634be4bdc5a3d3a8e136"
+    }
+  ]
+}

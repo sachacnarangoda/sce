@@ -1,0 +1,10 @@
+Sealed Continuation Envelope (SCE)
+Copyright 2026 [Sacha Narangoda] (Columba)
+
+This product includes software developed as part of the Linked Dead-Drop
+Protocol (LDDP) effort.
+
+SCE is released as an open, reusable primitive. The broader LDDP protocol
+of which it is one component is a separate and larger work.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
