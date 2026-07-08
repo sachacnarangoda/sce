@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use SCE or build on it, please cite it as below."
+title: "Sealed Continuation Envelope (SCE)"
+abstract: >-
+  A fail-closed cryptographic primitive that binds portable AI inference state
+  to its exact model-execution environment, so the state resumes only under an
+  identical environment and otherwise fails closed — instead of resuming into
+  silent, undetectable corruption. It is tamper-evident and key-committing,
+  making computed inference state safe to carry outside the provider that
+  produced it. SCE is the first open component of the Linked Dead-Drop Protocol
+  (LDDP).
+type: software
+authors:
+  - family-names: Narangoda
+    given-names: Sachintha
+license: Apache-2.0
+repository-code: "https://github.com/sachacnarangoda/sce"
+url: "https://github.com/sachacnarangoda/sce"
+version: "0.2.0"
+date-released: "2026-07-08"
+keywords:
+  - cryptography
+  - artificial-intelligence
+  - inference
+  - privacy
+  - provenance
+  - reproducibility
+  - authenticated-encryption
