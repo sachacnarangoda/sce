@@ -60,7 +60,7 @@ SCE is deliberately narrow — **one component** meant to sit underneath larger 
 ```bash
 pip install "cryptography>=43" numpy     # AES-GCM-SIV needs cryptography >= 43 (OpenSSL >= 3.2); numpy is only for the demo
 
-python tests/test_core.py                # full suite: 27 tests, incl. adversarial + fuzz
+python tests/test_core.py                # full suite: 29 tests, incl. adversarial + fuzz
 python examples/demo.py                  # narrated walkthrough of the fail-closed behaviour
 ```
 
@@ -112,8 +112,7 @@ This is a reference implementation meant to demonstrate the construction and anc
 
 ## License
 
-Intended to be released under a permissive license (Apache-2.0 recommended) so it can be adopted or absorbed by the anonymity-network and inference ecosystems it is meant to serve. Final choice at the author's discretion.
-
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the full text.
+Apache-2.0 is a permissive licence with an explicit patent grant: you are free to use, modify, and build on this work, including commercially, provided you preserve the copyright and licence notices.
 ---
-
-*Developed under the Columba / LDDP effort. Contributions and critique welcome, particularly from the Nym, CFRG, and confidential-/anonymous-inference communities — most of all on the manifest's completeness and on the keying/commitment construction.*
+Developed as the first open component of the Linked Dead-Drop Protocol (LDDP) effort. Contributions and critique welcome, particularly from the anonymity-network, CFRG, and confidential-/anonymous-inference communities — most of all on the manifest's completeness and on the keying/commitment construction.
