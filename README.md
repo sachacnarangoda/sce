@@ -113,6 +113,9 @@ This is a reference implementation meant to demonstrate the construction and anc
 ## License
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file for the full text.
+
 Apache-2.0 is a permissive licence with an explicit patent grant: you are free to use, modify, and build on this work, including commercially, provided you preserve the copyright and licence notices.
+
 ---
+
 Developed as the first open component of the Linked Dead-Drop Protocol (LDDP) effort. Contributions and critique welcome, particularly from the anonymity-network, CFRG, and confidential-/anonymous-inference communities — most of all on the manifest's completeness and on the keying/commitment construction.
