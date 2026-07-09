@@ -1,4 +1,5 @@
 # Sealed Continuation Envelope (SCE)
+![tests](https://github.com/sachacnarangoda/sce/actions/workflows/tests.yml/badge.svg)
 
 **A small cryptographic primitive that makes portable AI inference state fail *closed* when the model changes underneath it — instead of resuming into silent, undetectable corruption.**
 
