@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install "cryptography>=43" numpy
 
-      - name: Run test suite (29 tests)
+      - name: Run test suite
         run: python tests/test_core.py
 
       - name: Run fail-closed demo
