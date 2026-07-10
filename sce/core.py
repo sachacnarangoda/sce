@@ -1,5 +1,5 @@
 """
-Sealed Continuation Envelope (SCE) -- reference implementation (hardened v2)
+Sealed Continuation Envelope (SCE) -- reference implementation (hardened v3)
 ===========================================================================
 
 SCE binds portable AI inference state (a KV-cache slice, a state-space-model
@@ -10,7 +10,7 @@ environment that produced it, so that:
     * any mismatch or tampering FAILS CLOSED -- a loud, uniform error, never a
       silent, corrupted resume.
 
-This v2 revision hardens the construction against the issues a careful reviewer
+This revision hardens the construction against the issues a careful reviewer
 raises about v1:
 
   1. Nonce-misuse resistance.  The AEAD is AES-256-GCM-SIV (RFC 8452), not plain
@@ -125,6 +125,11 @@ SEAL_COUNT_CEILING_PER_KEY = 1 << 40
 _HEADER_PREFIX = struct.Struct(">4sB32sQ32s12s")   # magic, ver, memh, epoch, commit, nonce
 _CTLEN = struct.Struct(">I")
 
+# The uint32 ct_len frame bounds a single sealed payload. Enforced in seal_state so
+# an oversize state fails with a clean SCEError, not a raw struct.error deep in the
+# pack call. (The AEAD's own 2**36-byte limit is far higher; this frame binds first.)
+_MAX_STATE = (1 << 32) - 1 - _TAG_LEN     # ciphertext = plaintext + 16-byte tag
+
 _MISMATCH_MESSAGE = "sealed state could not be opened under the presented environment"
 
 
@@ -202,6 +207,19 @@ class ModelManifest:
         for k, v in self.extra.items():
             if not isinstance(k, str) or not isinstance(v, str):
                 raise SCEError("manifest 'extra' must map str -> str")
+        # Reject keys that collide after NFC normalisation. Two distinct-but-
+        # normalisation-equal keys would make canonical_bytes order-dependent and
+        # ambiguous, defeating the injectivity the fingerprint relies on.
+        seen_norm = set()
+        for k in self.extra:
+            nk = unicodedata.normalize("NFC", k)
+            if nk in seen_norm:
+                raise SCEError(
+                    "manifest 'extra' has keys that collide after NFC normalisation "
+                    f"({k!r}); de-duplicate them before constructing the manifest so "
+                    "the fingerprint stays unambiguous."
+                )
+            seen_norm.add(nk)
 
     def canonical_bytes(self) -> bytes:
         """Strict, deterministic serialisation: a format tag, then each core
@@ -294,8 +312,14 @@ def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
                     the committed half (infeasible). This is what makes the
                     scheme key-committing, which a plain AEAD is not.
     """
+    if not isinstance(master_secret, (bytes, bytearray)):
+        raise SCEError(
+            f"master_secret must be bytes, got {type(master_secret).__name__}; "
+            "pass raw key bytes (e.g. os.urandom(32)), not a str"
+        )
     if len(master_secret) < 16:
         raise SCEError("master_secret must be >= 16 bytes of high-entropy key material")
+    master_secret = bytes(master_secret)
     info = _kdf_info(context, epoch_id, memh)
     material = HKDF(
         algorithm=hashes.SHA3_256(),
@@ -326,6 +350,7 @@ def seal_state(
     master_secret: bytes,
     epoch_id: int = 0,
     context: bytes = b"",
+    seal_count: int | None = None,
 ) -> bytes:
     """Seal `state` so it can only be reopened under an identical `manifest`
     (and matching epoch, context, and master secret).
@@ -333,11 +358,33 @@ def seal_state(
     Returns an opaque, self-describing, tamper-evident, key-committing envelope.
     Safe to hand to an untrusted holder: it reveals nothing about the plaintext
     and cannot be modified or re-bound to another environment without detection.
+
+    `seal_count` is optional, opt-in blast-radius control. SCE is stateless and
+    cannot count seals itself; if the caller passes a monotonic per-(secret,
+    epoch) count, seal_state refuses once it reaches SEAL_COUNT_CEILING_PER_KEY,
+    prompting a master-secret rotation or an epoch bump. Passing None (the
+    default) disables the check, and the caller then owns nonce-collision risk.
     """
     if not isinstance(state, (bytes, bytearray)):
         raise SCEError("state must be bytes; serialise your tensors/objects first")
+    if len(state) > _MAX_STATE:
+        raise SCEError(
+            f"state is {len(state)} bytes; SCE's uint32 length frame caps a single "
+            f"sealed payload at {_MAX_STATE} bytes (~4 GiB). Chunk a large KV-cache, "
+            "or seal a compact / summarised state instead."
+        )
     if not isinstance(context, (bytes, bytearray)):
         raise SCEError("context must be bytes")
+    if seal_count is not None:
+        if not isinstance(seal_count, int) or isinstance(seal_count, bool) or seal_count < 0:
+            raise SCEError("seal_count must be a non-negative integer or None")
+        if seal_count >= SEAL_COUNT_CEILING_PER_KEY:
+            raise SCEError(
+                f"seal_count {seal_count} has reached SEAL_COUNT_CEILING_PER_KEY "
+                f"({SEAL_COUNT_CEILING_PER_KEY}); rotate the master secret or bump the "
+                "epoch. SCE is stateless and cannot track this for you -- the caller "
+                "must pass and persist a monotonic per-(secret, epoch) count."
+            )
     _check_epoch(epoch_id)
 
     memh = manifest.memh()
@@ -357,7 +404,7 @@ def _parse(sealed: bytes):
     fields = _HEADER_PREFIX.unpack(prefix)
     magic, version = fields[0], fields[1]
     if magic != _MAGIC:
-        raise MalformedEnvelope("bad magic: not an SCE v2 envelope")
+        raise MalformedEnvelope("bad magic: not an SCE v3 envelope")
     if version != _VERSION:
         raise MalformedEnvelope(f"unsupported SCE envelope version {version}")
     off = _HEADER_PREFIX.size
