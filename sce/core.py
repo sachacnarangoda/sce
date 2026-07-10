@@ -94,14 +94,16 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
-_MAGIC = b"SCE2"
-_VERSION = 2
+_MAGIC = b"SCE3"
+_VERSION = 3
 _NONCE_LEN = 12          # AES-GCM-SIV nonce
 _TAG_LEN = 16            # AES-GCM-SIV authentication tag (128-bit)
 _MEMH_LEN = 32           # SHA3-256
 _COMMIT_LEN = 32         # SHA3-256 key commitment
 _KEY_LEN = 32            # AES-256
-_DOMAIN = b"LDDP-SCE-v2"  # domain-separation label
+_DOMAIN = b"LDDP-SCE-v3"  # domain-separation label
+_KDF_INFO_PREFIX = b"LDDP-SCE|kdf-v3|"      # fixed prefix on the HKDF info string
+_KDF_CANON_TAG = b"LDDP-SCE|kdf-canon-v3"   # tag on the length-prefixed info canonical form
 _MANIFEST_TAG = b"SCEMAN1"  # canonical-manifest format tag
 
 # Conservative per-key seal ceiling. GCM-SIV with random 96-bit nonces is safe
@@ -111,7 +113,7 @@ SEAL_COUNT_CEILING_PER_KEY = 1 << 40
 
 # Envelope layout (big-endian):
 #   -- header prefix (all of it is bound into the AEAD associated data) --
-#   4s  magic       b"SCE2"
+#   4s  magic       b"SCE3"
 #   B   version     2
 #   32s memh        environment fingerprint the state was sealed under
 #   Q   epoch       epoch the state was sealed under
@@ -240,6 +242,33 @@ def _check_epoch(epoch_id: int) -> None:
         raise SCEError("epoch_id must be an integer in [0, 2**64)")
 
 
+def _lp(b: bytes) -> bytes:
+    """Length-prefix arbitrary bytes with a 4-byte big-endian length.
+
+    The same discipline used by the manifest canonicaliser. Applying it to every
+    field of a composite input makes that input unambiguous by construction: no
+    two distinct field tuples can serialise to the same byte string.
+    """
+    return len(b).to_bytes(4, "big") + b
+
+
+def _kdf_info(context: bytes, epoch_id: int, memh: bytes) -> bytes:
+    """Build the HKDF `info` string unambiguously.
+
+    Every field is length-prefixed and folded through SHA3-256, so the info
+    channel inherits the same non-ambiguity guarantee as the manifest encoding.
+    This removes any reliance on incidental properties (such as MEMH being
+    fixed-width and last) and keeps one canonicalisation discipline to audit.
+    """
+    canonical = (
+        _KDF_CANON_TAG
+        + _lp(context)
+        + _lp(epoch_id.to_bytes(8, "big"))
+        + _lp(memh)
+    )
+    return _KDF_INFO_PREFIX + hashlib.sha3_256(canonical).digest()
+
+
 def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
                          context: bytes) -> tuple[bytes, bytes]:
     """Derive (K_enc, commitment) from the master secret and the environment.
@@ -248,11 +277,15 @@ def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
     epoch, context), so a change to ANY of those changes both. The commitment is
     SHA3-256 of an INDEPENDENT key half:
 
-        material     = HKDF(secret, salt=epoch, info=DOMAIN|context|MEMH, len=64)
+        info         = "LDDP-SCE|kdf-v3|" || SHA3-256( LP(context)|LP(epoch)|LP(MEMH) )
+        material     = HKDF(secret, salt=epoch, info=info, len=64)
         K_enc        = material[:32]
         commitment   = SHA3-256(DOMAIN|"commit"|material[32:])
 
-    This gives a binding, hiding commitment to the key material:
+    The `info` string is built from length-prefixed fields (see `_kdf_info`), so
+    it is unambiguous by construction rather than by the incidental fact that
+    MEMH is fixed-width and terminal. This gives a binding, hiding commitment to
+    the key material:
       * hiding   -- the committed half is independent of K_enc, so publishing the
                     commitment reveals nothing usable about the encryption key;
       * binding  -- a different environment yields different HKDF output, hence a
@@ -263,7 +296,7 @@ def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
     """
     if len(master_secret) < 16:
         raise SCEError("master_secret must be >= 16 bytes of high-entropy key material")
-    info = _DOMAIN + b"|kdf|" + context + b"|" + memh
+    info = _kdf_info(context, epoch_id, memh)
     material = HKDF(
         algorithm=hashes.SHA3_256(),
         length=_KEY_LEN * 2,
