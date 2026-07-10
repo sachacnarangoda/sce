@@ -21,6 +21,7 @@ no GPU. The SCE calls are exactly what they would be in production; only the
 import os
 import json
 import base64
+import logging
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +29,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sce import (  # noqa: E402
     ModelManifest, seal_state, unseal_state, StateSealMismatch, explain_mismatch,
 )
+
+# The refusal reason (explain_mismatch) is an ORACLE. It is written here, to the
+# SERVER's log, and must never be placed on the wire. See the chat() handler.
+logger = logging.getLogger("sce.serving_adapter")
 
 
 # --------------------------------------------------------------------------- #
@@ -69,11 +74,12 @@ class MockInferenceServer:
                 prior_state = unseal_state(sealed, self.manifest,
                                            master_secret=self.master_secret)
             except StateSealMismatch:
-                # Fail closed: tell the client to resubmit from transcript.
-                return {
-                    "error": "state_epoch_mismatch",
-                    "detail": explain_mismatch(sealed, self.manifest),  # trusted server-side
-                }
+                # Fail closed. The REASON is an oracle, so it is logged server-side
+                # only and NEVER placed on the wire; the client receives a uniform
+                # code and rebuilds from its own transcript.
+                logger.warning("SCE unseal refused (server log only): %s",
+                               explain_mismatch(sealed, self.manifest))
+                return {"error": "state_epoch_mismatch"}
 
         # ---- the ONLY mocked line: run the model ----
         reply, new_state = self._run_model(request["message"], prior_state)
@@ -115,8 +121,9 @@ class Client:
         resp = self.server.chat({"message": message, "continuation": self.continuation})
 
         if resp.get("error") == "state_epoch_mismatch":
-            print(f"    [client] server refused stale state: {resp['detail']}")
-            print( "    [client] rebuilding from transcript and retrying...")
+            # The client learns only the uniform code -- never *why* it failed.
+            print("    [client] server refused stale state (uniform error, no reason given);")
+            print("    [client] rebuilding from transcript and retrying...")
             # Rebuild: replay the whole transcript in one turn (re-prefill), no stale blob.
             self.continuation = None
             replay = " | ".join(f"{r}:{m}" for r, m in self.transcript)
@@ -132,6 +139,9 @@ def rule(t):
 
 
 def main():
+    # Surface the server-side warning log so the demo shows that the reason still
+    # exists ON THE SERVER -- it is simply never sent to the client.
+    logging.basicConfig(level=logging.WARNING, format="  [server-log] %(message)s")
     server = MockInferenceServer()
     client = Client(server)
 
