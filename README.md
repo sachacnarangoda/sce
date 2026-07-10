@@ -3,7 +3,7 @@
 
 **A small cryptographic primitive that makes portable AI inference state fail *closed* when the model changes underneath it — instead of resuming into silent, undetectable corruption.**
 
-Status: **reference / proof-of-concept (hardened v2).** Correct and tested (30 tests, including adversarial, a manifest-theft/brute-force simulation, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
+Status: **reference / proof-of-concept (hardened v3).** Correct and tested (35 tests, including adversarial, a manifest-theft/brute-force simulation, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
 
 > **Part of a larger effort.** SCE is the first open component of the **Linked Dead-Drop Protocol (LDDP)** — a design for private, provider-independent AI inference in which providers compute without becoming long-term custodians of identity, history, or session state. SCE is the foundation-stone primitive: the piece that makes portable inference state safe to carry. It is released openly on its own so it can be used, reviewed, and built upon. The broader LDDP protocol is a separate and continuing work. If SCE is useful to you, or you're working on adjacent problems (reproducibility, runtime attestation, private inference, agent-state safety), contact and collaboration are welcome.
 
@@ -61,7 +61,7 @@ SCE is deliberately narrow — **one component** meant to sit underneath larger 
 ```bash
 pip install "cryptography>=43" numpy     # AES-GCM-SIV needs cryptography >= 43 (OpenSSL >= 3.2); numpy is only for the demo
 
-python tests/test_core.py                # full suite: 30 tests, incl. adversarial + fuzz
+python tests/test_core.py                # full suite: 35 tests, incl. adversarial + fuzz
 python examples/demo.py                  # narrated walkthrough of the fail-closed behaviour
 ```
 
@@ -89,7 +89,7 @@ except StateSealMismatch:
 ```
 
 - `ModelManifest(...)` — the environment fingerprint (validated str fields); `.memh()` returns 32 bytes.
-- `seal_state(...) -> bytes` — produce a sealed, committing envelope.
+- `seal_state(...) -> bytes` — produce a sealed, committing envelope. An optional `seal_count` enables opt-in, per-key blast-radius control (SCE is stateless, so the caller supplies and persists the monotonic count).
 - `unseal_state(...) -> bytes` — resume, or raise `StateSealMismatch` (uniform message).
 - `describe_envelope(sealed) -> dict` — inspect non-secret header fields (no key needed).
 - `explain_mismatch(sealed, manifest) -> str` — **opt-in, trusted-context-only** human-readable reason for a refusal. Never call this on untrusted input paths: revealing *why* a seal failed is an oracle. `unseal_state` never calls it.
@@ -109,6 +109,7 @@ This is a reference implementation meant to demonstrate the construction and anc
 - **Not forward-secret in this reference form.** The reference implementation seals under a *static* `master_secret`, so a provider that is compromised or compelled (e.g. by subpoena) could retroactively decrypt every envelope sealed under that key. For zero-trust deployments this is the central limitation — and it is a property of the static-key reference design, not of the sealing logic. The known remediation sits one layer above the primitive: derive the sealing key ephemerally *per transaction* by using a client–server Diffie-Hellman shared secret as the HKDF input keying material, keeping the environment fingerprint (MEMH), epoch, and context in the HKDF `info`. The encryption key then depends on both the client's transient cryptographic presence and the exact environment — either changing fails closed — and it exists only transiently on the server, so a provider holding sealed envelopes alone has nothing decryptable. In the static form, `epoch_id` and `context` still bound blast radius and support rotation.
 - **No replay protection** (see "What it is not").
 - **Side channels.** The AEAD tag check and the constant-time commitment compare are constant-time; surrounding Python is not audited for timing, and the environment fingerprint is not secret.
+- **Bounded payload size.** A single sealed envelope is capped at ~4 GiB by the uint32 length frame; oversize input is refused with a clean error, never truncated. SCE's intended home is compact state (recurrent/SSM state or a summary), so in practice this is not a limit — see `bench/kv_cache_reality.py`.
 - **Integration.** It is not yet wired to a specific inference engine's state-export path. That is where the compact-state fit matters — state-space models or summarised context, rather than a full transformer KV-cache, which is often larger than the text that produced it.
 
 ## License
