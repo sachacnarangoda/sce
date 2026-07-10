@@ -16,7 +16,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const DOMAIN = Buffer.from('LDDP-SCE-v2');
+const DOMAIN = Buffer.from('LDDP-SCE-v3');
+const KDF_INFO_PREFIX = Buffer.from('LDDP-SCE|kdf-v3|');
+const KDF_CANON_TAG = Buffer.from('LDDP-SCE|kdf-canon-v3');
 const MANIFEST_TAG = Buffer.from('SCEMAN1');
 const CORE_FIELDS = ['weights_hash', 'quantization', 'kernel_build_id',
                      'tensor_parallel', 'numerics_mode'];
@@ -47,12 +49,26 @@ function sha3_256(buf) { return crypto.createHash('sha3-256').update(buf).digest
 
 function memh(m) { return sha3_256(canonicalManifest(m)); }
 
+function lp(buf) {
+  return Buffer.concat([u32be(buf.length), buf]);
+}
+
+// HKDF info string — must match _kdf_info in core.py (length-prefixed, hashed).
+function kdfInfo(contextUtf8, epochId, memhBuf) {
+  const canonical = Buffer.concat([
+    KDF_CANON_TAG,
+    lp(Buffer.from(contextUtf8, 'utf8')),
+    lp(u64be(epochId)),
+    lp(memhBuf),
+  ]);
+  return Buffer.concat([KDF_INFO_PREFIX, sha3_256(canonical)]);
+}
+
 // K_enc + commitment -- must match _derive_key_material.
 function deriveKeyMaterial(masterSecretHex, memhBuf, epochId, contextUtf8) {
   const master = Buffer.from(masterSecretHex, 'hex');
   const salt = u64be(epochId);
-  const info = Buffer.concat([DOMAIN, Buffer.from('|kdf|'),
-                              Buffer.from(contextUtf8, 'utf8'), Buffer.from('|'), memhBuf]);
+  const info = kdfInfo(contextUtf8, epochId, memhBuf);
   const material = Buffer.from(crypto.hkdfSync('sha3-256', master, salt, info, 64));
   const kEnc = material.subarray(0, 32);
   const kComHalf = material.subarray(32, 64);
