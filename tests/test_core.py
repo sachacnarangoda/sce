@@ -71,7 +71,7 @@ def test_describe_envelope_reveals_no_plaintext():
     info = describe_envelope(sealed)
     assert secret not in repr(info).encode()
     assert info["sealed_under_epoch"] == 5
-    assert info["magic"] == "SCE2"
+    assert info["magic"] == "SCE3"
     assert len(bytes.fromhex(info["key_commitment"])) == 32
 
 
@@ -274,6 +274,31 @@ def test_canonicalisation_has_no_delimiter_ambiguity():
     assert compute_memh(a) != compute_memh(b), "delimiter/boundary ambiguity present"
 
 
+def test_kdf_info_is_unambiguous():
+    """The HKDF info string must be injective in (context, epoch, MEMH). This
+    guards against reintroducing a delimiter ambiguity in the key-derivation
+    encoding: distinct inputs — including contexts of different lengths and
+    contexts containing the historical delimiter byte — must yield distinct info
+    strings and therefore distinct derived keys, with no reliance on MEMH being
+    fixed-width or terminal.
+    """
+    memh_x = b"\x01" * 32
+    memh_y = b"\x02" * 32
+    triples = [
+        (b"", 0, memh_x),
+        (b"a", 0, memh_x),
+        (b"a|", 0, memh_x),          # context containing the old delimiter
+        (b"|a", 0, memh_x),
+        (b"a", 1, memh_x),           # epoch differs
+        (b"a", 0, memh_y),           # MEMH differs
+        (b"aa", 0, memh_x),          # length differs
+    ]
+    infos = [core._kdf_info(c, e, m) for (c, e, m) in triples]
+    assert len(set(infos)) == len(infos), "kdf info string is not injective"
+    keys = [core._derive_key_material(MASTER, m, e, c)[0] for (c, e, m) in triples]
+    assert len(set(keys)) == len(keys), "distinct inputs produced a colliding key"
+
+
 def test_non_string_manifest_fields_are_rejected():
     """Numbers/bools/None must be rejected so the fingerprint can't depend on
     how they would have been rendered."""
@@ -335,7 +360,7 @@ def test_explain_mismatch_is_opt_in_only():
 
 # ===================== E. ROBUSTNESS ================================ #
 def test_malformed_envelope_raises_cleanly():
-    for junk in [b"", b"x", b"SCE2short", os.urandom(50), os.urandom(500),
+    for junk in [b"", b"x", b"SCE3short", os.urandom(50), os.urandom(500),
                  b"SCE1" + os.urandom(120)]:
         try:
             unseal_state(junk, base_manifest(), master_secret=MASTER)
