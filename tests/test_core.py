@@ -1,5 +1,5 @@
 """
-Test suite for the Sealed Continuation Envelope (hardened v2).
+Test suite for the Sealed Continuation Envelope (hardened v3).
 
 Runs WITHOUT pytest:  python tests/test_core.py
 
@@ -15,6 +15,7 @@ Sections:
 import os
 import sys
 import struct
+import logging
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -520,6 +521,125 @@ def rand_manifest_diff(m, rng):
                       "tensor_parallel", "numerics_mode"])
     fields[key] = fields[key] + "-DIFF"
     return ModelManifest(**fields)
+
+
+# ===================== F. REGRESSION (review fixes) ================= #
+# Each test here corresponds to a specific finding from the code review and
+# would have caught the bug it guards against.
+
+def test_oversize_state_is_rejected_cleanly():
+    """Fix #3: a state larger than the uint32 length frame must raise SCEError,
+    NOT a raw struct.error. The cap is shrunk here to avoid allocating ~4 GiB."""
+    m = base_manifest()
+    saved = core._MAX_STATE
+    try:
+        core._MAX_STATE = 64                       # pretend the frame is tiny
+        try:
+            seal_state(b"x" * 65, m, master_secret=MASTER)
+        except SCEError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            raise AssertionError(f"oversize state raised non-SCE error: {exc!r}")
+        else:
+            raise AssertionError("oversize state was not rejected")
+        # a state within the (shrunk) cap still seals and round-trips
+        sealed = seal_state(b"x" * 64, m, master_secret=MASTER)
+        assert unseal_state(sealed, m, master_secret=MASTER) == b"x" * 64
+    finally:
+        core._MAX_STATE = saved
+    # the real cap is exactly the uint32 frame minus the AEAD tag
+    assert core._MAX_STATE == (1 << 32) - 1 - core._TAG_LEN
+
+
+def test_non_bytes_master_secret_rejected():
+    """Fix #4: a str (or other non-bytes) master_secret must raise SCEError, not a
+    low-level TypeError from inside HKDF -- including the >=16-char case that used
+    to slip past the length check."""
+    m = base_manifest()
+    for bad in ["sixteencharacter", "short", 12345, None]:
+        try:
+            seal_state(b"state", m, master_secret=bad)
+        except SCEError:
+            continue
+        except Exception as exc:  # noqa: BLE001
+            raise AssertionError(f"non-bytes secret raised non-SCE error: {exc!r}")
+        raise AssertionError(f"non-bytes master_secret accepted: {bad!r}")
+    # a bytearray of sufficient length is still accepted and round-trips
+    sealed = seal_state(b"state", m, master_secret=bytearray(b"\x11" * 32))
+    assert unseal_state(sealed, m, master_secret=bytearray(b"\x11" * 32)) == b"state"
+
+
+def test_nfc_colliding_extra_keys_rejected():
+    """Fix #5: two extra keys that are distinct strings but equal under NFC must be
+    rejected at construction, so the fingerprint stays unambiguous and
+    order-independent."""
+    composed = "caf\u00e9"        # e-acute as one code point
+    decomposed = "cafe\u0301"     # e + combining acute
+    assert composed != decomposed
+    for order in ({composed: "1", decomposed: "2"}, {decomposed: "2", composed: "1"}):
+        try:
+            base_manifest(extra=order)
+        except SCEError:
+            continue
+        raise AssertionError("NFC-colliding extra keys were accepted")
+    # a single normalised form is of course fine
+    assert len(compute_memh(base_manifest(extra={composed: "1"}))) == 32
+
+
+def test_seal_count_ceiling_is_enforced_when_supplied():
+    """Fix #8: an opt-in seal_count must fail closed at the per-key ceiling and
+    proceed below it. SCE stays stateless -- the caller owns the counter."""
+    from sce import SEAL_COUNT_CEILING_PER_KEY
+    m = base_manifest()
+    # below the ceiling: seals normally and round-trips
+    sealed = seal_state(b"state", m, master_secret=MASTER, seal_count=0)
+    assert unseal_state(sealed, m, master_secret=MASTER) == b"state"
+    # at the ceiling: refused
+    try:
+        seal_state(b"state", m, master_secret=MASTER,
+                   seal_count=SEAL_COUNT_CEILING_PER_KEY)
+    except SCEError:
+        pass
+    else:
+        raise AssertionError("seal_count at the ceiling was not refused")
+    # bad seal_count values are rejected (bool is not an int here)
+    for bad in [-1, 1.0, "0", True]:
+        try:
+            seal_state(b"state", m, master_secret=MASTER, seal_count=bad)
+        except SCEError:
+            continue
+        raise AssertionError(f"bad seal_count accepted: {bad!r}")
+    # None (the default) disables the check
+    assert unseal_state(seal_state(b"s", m, master_secret=MASTER, seal_count=None),
+                        m, master_secret=MASTER) == b"s"
+
+
+def test_serving_adapter_refusal_carries_no_reason():
+    """Fix #1 (oracle leak): the serving adapter's fail-closed response must NOT
+    include explain_mismatch output -- or any 'why' -- on the wire."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "examples", "serving_adapter.py")
+    if not os.path.exists(path):
+        return  # example not present in this checkout; nothing to guard
+    spec = importlib.util.spec_from_file_location("serving_adapter", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    logging.disable(logging.CRITICAL)   # keep the server-side warning out of test output
+    try:
+        server = mod.MockInferenceServer()
+        first = server.chat({"message": "hello", "continuation": None})
+        server.update_model()           # model changes underneath -> unseal fails closed
+        refused = server.chat({"message": "again", "continuation": first["continuation"]})
+    finally:
+        logging.disable(logging.NOTSET)
+
+    assert refused.get("error") == "state_epoch_mismatch"
+    assert "detail" not in refused, "adapter leaked a refusal reason key on the wire"
+    blob = repr(refused)
+    for leak in ("MEMH", "environment", "quantis", "sealed under"):
+        assert leak not in blob, f"adapter response leaks '{leak}'"
 
 
 # ===================== runner ======================================= #
