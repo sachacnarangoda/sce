@@ -1,12 +1,13 @@
 {
-  "description": "SCE v2 known-answer vectors. Deterministic values for cross-language verification.",
-  "envelope_magic": "SCE2",
+  "description": "SCE v3 known-answer vectors. Deterministic values for cross-language verification.",
+  "envelope_magic": "SCE3",
   "aead": "AES-256-GCM-SIV (RFC 8452)",
   "hash": "SHA3-256",
   "kdf": "HKDF-SHA3-256",
-  "domain": "LDDP-SCE-v2",
+  "domain": "LDDP-SCE-v3",
   "manifest_canonical_format": "SCEMAN1: tag, then each core field as uint32-BE length + NFC-UTF8 bytes (fixed order), then uint32-BE count of extra items, then each sorted key/value length-prefixed",
-  "commitment": "SHA3-256(DOMAIN|'commit'|HKDF_material[32:64]); key material = HKDF-SHA3-256(master, salt=epoch_be, info=DOMAIN|'kdf'|context|MEMH, len=64)",
+  "kdf_info": "info = 'LDDP-SCE|kdf-v3|' || SHA3-256('LDDP-SCE|kdf-canon-v3' || LP(context) || LP(epoch_be) || LP(MEMH)); LP(x)=uint32-BE(len)||x",
+  "commitment": "SHA3-256(DOMAIN|'commit'|HKDF_material[32:64]); material = HKDF-SHA3-256(master, salt=epoch_be, info=<above>, len=64)",
   "note": "nonce and ciphertext are randomised per seal and are NOT part of the KAT.",
   "cases": [
     {
@@ -23,8 +24,8 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "",
-      "k_enc_hex": "753a76c8c16109677b1e7ff05c9603a032e9a3c8bae3a01c9cf76ef91d99d90e",
-      "key_commitment_hex": "fe8756894cc5067f39420314b3ea91bc065fad46ac54c41ae0bcd130dab7a2b5"
+      "k_enc_hex": "9778656ff48cf9bbc8b1151d198251140af6fda13787a19e702c9ad2787e2f4e",
+      "key_commitment_hex": "6793b5fb3df2cab3015332eb83362e49bb7f2a3299328a491affa0779a899065"
     },
     {
       "manifest": {
@@ -40,8 +41,8 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "tenant-A",
-      "k_enc_hex": "677257aa8a2507be41da8f0e1fca2bb1652dbf60e7e0b71928cd241434a2246d",
-      "key_commitment_hex": "4e79eb034f85a6d51bc0094a292a32c5f3ea382fbcec3609a36d793eaf15b39f"
+      "k_enc_hex": "5960af2f876970dad5c07326421e35da817aa28e514f1f34e82a2da92bc2169d",
+      "key_commitment_hex": "d47278b482c5b66d7f476b032ae03b08c7a9e28e6843acc5e4ebd8b7d027cff3"
     },
     {
       "manifest": {
@@ -57,8 +58,8 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "",
-      "k_enc_hex": "c03df48bcd0d651f03500cc2ae946c6f0bb5d4d5ee0a032f797424ccc4593889",
-      "key_commitment_hex": "92cb2634aa63f68aa89f27a3b06414867f5161f8d47a1d300a775b5701e5934c"
+      "k_enc_hex": "a2289707a979d7f8dfbe02c1ed56c214279b6a9013e604ef1f330c259974842c",
+      "key_commitment_hex": "4f7b9046e51b0fb8e1d15a9def423a8d56213d18c04af098a2dd2c50ee6a2166"
     },
     {
       "manifest": {
@@ -74,8 +75,8 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "tenant-A",
-      "k_enc_hex": "8ced705f445a0bdd6f62942d3a1400cb5090e495f98c068d7389a53f522586cc",
-      "key_commitment_hex": "1cecaa14cbcfbfe1ec83329bc916ad0a4062b90e2a264d26a1de1dfb9cb460e0"
+      "k_enc_hex": "1adc4328d9a7901e2e6aa45ba733cc12116951c5dfcb88fa6c7dfafeb672cf2c",
+      "key_commitment_hex": "5a249d07d4bffcafa03707b58502743a9e3a59b6191f72f9a70049745c1d4de3"
     },
     {
       "manifest": {
@@ -93,8 +94,8 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "",
-      "k_enc_hex": "131ac96fb8bfc386573d5198552ab348df5f24d3da93b9349b8410058187a967",
-      "key_commitment_hex": "134c287cb95d8c0ccba7f63d1704208518b7861971bd62f7c7ea745d48162ed1"
+      "k_enc_hex": "c131ceffdd90a665562cad5f747488bee8832e2d84d5f4d1081d870dfa2b12d0",
+      "key_commitment_hex": "3ab00c435c07f829ec6ac06688938dd66901154e7411d9f6057a71889387cfbd"
     },
     {
       "manifest": {
@@ -112,8 +113,8 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "tenant-A",
-      "k_enc_hex": "adcea1ab34b5ca36e5a5f402f539d1d6c73b01a669fc9e5d5f193d832c65ffbf",
-      "key_commitment_hex": "29435af02a4fa461300f853b9fb6278c7a9741f8f066634be4bdc5a3d3a8e136"
+      "k_enc_hex": "6813fed883d6814f480a96bdbce495adcee0c84d641c994cd8cae84b4be29c75",
+      "key_commitment_hex": "8d10a2da5b997be4e1ebb5b938179eacf27b91998aec5e4230701d1a03b8238f"
     }
   ]
 }
