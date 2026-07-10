@@ -3,7 +3,7 @@
 
 **A small cryptographic primitive that makes portable AI inference state fail *closed* when the model changes underneath it — instead of resuming into silent, undetectable corruption.**
 
-Status: **reference / proof-of-concept (hardened v2).** Correct and tested (29 tests, including adversarial, a manifest-theft/brute-force simulation, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
+Status: **reference / proof-of-concept (hardened v2).** Correct and tested (30 tests, including adversarial, a manifest-theft/brute-force simulation, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
 
 > **Part of a larger effort.** SCE is the first open component of the **Linked Dead-Drop Protocol (LDDP)** — a design for private, provider-independent AI inference in which providers compute without becoming long-term custodians of identity, history, or session state. SCE is the foundation-stone primitive: the piece that makes portable inference state safe to carry. It is released openly on its own so it can be used, reviewed, and built upon. The broader LDDP protocol is a separate and continuing work. If SCE is useful to you, or you're working on adjacent problems (reproducibility, runtime attestation, private inference, agent-state safety), contact and collaboration are welcome.
 
@@ -61,7 +61,7 @@ SCE is deliberately narrow — **one component** meant to sit underneath larger 
 ```bash
 pip install "cryptography>=43" numpy     # AES-GCM-SIV needs cryptography >= 43 (OpenSSL >= 3.2); numpy is only for the demo
 
-python tests/test_core.py                # full suite: 29 tests, incl. adversarial + fuzz
+python tests/test_core.py                # full suite: 30 tests, incl. adversarial + fuzz
 python examples/demo.py                  # narrated walkthrough of the fail-closed behaviour
 ```
 
