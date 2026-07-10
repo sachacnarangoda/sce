@@ -13,7 +13,7 @@ from .core import (
     SEAL_COUNT_CEILING_PER_KEY,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "ModelManifest",
