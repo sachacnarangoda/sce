@@ -12,8 +12,14 @@ from .core import (
     MalformedEnvelope,
     SEAL_COUNT_CEILING_PER_KEY,
 )
+from .stream import (
+    seal_state_chunked,
+    unseal_state_chunked,
+    describe_stream,
+    DEFAULT_SEGMENT_SIZE,
+)
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "ModelManifest",
@@ -22,6 +28,10 @@ __all__ = [
     "unseal_state",
     "describe_envelope",
     "explain_mismatch",
+    "seal_state_chunked",
+    "unseal_state_chunked",
+    "describe_stream",
+    "DEFAULT_SEGMENT_SIZE",
     "SCEError",
     "StateSealMismatch",
     "MalformedEnvelope",
