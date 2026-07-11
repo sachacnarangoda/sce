@@ -5,6 +5,61 @@ versioning; the envelope wire version (e.g. `SCE3`) is bumped whenever the
 on-wire format or the key derivation changes, so envelopes from different
 versions are intentionally incompatible and fail closed rather than mixing.
 
+## [0.4.1] — 2026-07-11
+
+### Added — chunked stream container (SCES v1), no envelope wire change
+`seal_state_chunked` / `unseal_state_chunked` seal an arbitrarily large state as
+an ordered sequence of bounded SCE4 envelopes, lifting the single-envelope size
+ceiling (the uint32 ~4 GiB frame, and AES-GCM-SIV's own ~64 GiB per-message
+limit) for states like a long-context transformer KV-cache when compact
+SSM/summarised state is not an option. **The SCE4 envelope format is unchanged** —
+this is a container layer *above* the envelope, so it required no re-audit of the
+seal and no wire bump; `SCE4` envelopes and vectors are untouched.
+
+- **New public API** (in a new `sce.stream` module, re-exported from `sce`):
+  `seal_state_chunked(...)`, `unseal_state_chunked(...)`, `describe_stream(...)`,
+  and `DEFAULT_SEGMENT_SIZE` (64 MiB). The single-envelope API is unaffected.
+- **Sequence binding reuses `context`, adds no new cryptography.** Each segment is
+  sealed under a per-segment context
+  `"LDDP-SCE|stream-v1" || LP(context) || LP(stream_id) || u64(i) || u64(n) || u64(L) || u64(C)`,
+  where `stream_id` is fresh-random per container. Because `context` feeds the key
+  derivation, a segment opens only when the unsealer reconstructs its exact
+  position in its exact stream.
+- **Fail-closed against sequence tampering.** Reordering, dropping, truncating,
+  extending, duplicating, or splicing segments (including from another stream) all
+  fail closed, as do environment/epoch/context/secret changes and any flipped
+  byte. The `SCES` header (`stream_id`, `n`, segment size, total length) carries no
+  MAC of its own — it is authenticated by consequence, since any change to it makes
+  every segment fail to derive its key.
+- **Format separation.** A stream container (`SCES` magic) and a single envelope
+  (`SCE4` magic) each reject the other's decoder, so the two cannot be confused.
+
+### Security notes
+- `describe_stream` exposes only the container's format identity, segment count,
+  and sizes — no `stream_id`, no plaintext. As with a single envelope, the
+  container length reveals the payload size (the inherent size-metadata channel).
+- On a tampered stream, `unseal_state_chunked` stops at the first failing segment.
+  That is a timing signal about the *position* of the first fault, which is not
+  secret (the attacker chose it; the segment count is in the cleartext header) and
+  leaks no plaintext or key material; each segment still fails with the envelope's
+  own uniform, oracle-free error.
+
+### Memory
+Returns the whole container as `bytes`: peak memory is ~L (the container) plus a
+per-segment transient (~2·segment_size), which removes the AEAD size ceiling and
+avoids holding 2–3× the *whole* state for one AEAD pass, but does not yet stream
+to disk. A file-backed streaming variant is the natural follow-up for states too
+large to hold assembled in memory.
+
+### Tests / tooling
+- New `tests/test_stream.py` (**20 tests**): round-trip across many segment sizes,
+  a larger multi-segment state, empty/single-segment states, and fail-closed
+  coverage of reorder, drop, drop-with-header-fixup, truncate, trailing bytes,
+  cross-stream splice, per-segment tamper, and header (`stream_id`/`total_len`)
+  tamper, plus format-separation and input-validation guards. Wired into CI.
+- Package version `0.4.0` → `0.4.1`. No changes to `sce/core.py`,
+  `test_vectors.json`, or the JavaScript verifier.
+
 ## [0.4.0] — 2026-07-11
 
 ### Changed (wire + key derivation — this is a wire bump)
@@ -82,7 +137,10 @@ fail-closed). Envelopes sealed by 0.3.x cannot be read by 0.4.0 and vice versa.
 ## [0.3.1] — 2026-07-10
 
 ### Fixed (review hardening — no wire change)
-This is a patch-level release; envelopes sealed
+This release addresses findings from an external code review. **None of it
+changes the wire format or the key derivation** — `SCE3` envelopes and the v3
+test vectors are unaffected, and the independent JavaScript verifier still
+reproduces every vector exactly. It is a patch-level release; envelopes sealed
 by 0.3.0 remain readable.
 
 - **Oversize input now fails cleanly.** `seal_state` rejects a state larger than
