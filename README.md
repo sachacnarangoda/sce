@@ -3,7 +3,7 @@
 
 **A small cryptographic primitive that makes portable AI inference state fail *closed* when the model changes underneath it — instead of resuming into silent, undetectable corruption.**
 
-Status: **reference / proof-of-concept (v4).** Correct and tested (38 tests, including adversarial, a manifest-theft/brute-force simulation, unlinkability regressions, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
+Status: **reference / proof-of-concept (v4).** Correct and tested (38 core tests plus a 20-test chunked-stream suite, including adversarial cases, a manifest-theft/brute-force simulation, unlinkability regressions, structural-tamper tests on chunked streams, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
 
 > **v4 wire change.** The envelope no longer carries the environment fingerprint (MEMH), the epoch, or a deterministic commitment in cleartext — so a party merely *holding* an envelope can no longer link or cluster a user's sessions by a stable tag. Those fields are re-derived on unseal and bound through the key and the AEAD associated data instead. v4 envelopes and older (SCE3) envelopes deliberately refuse to open under each other. See [How it works](#how-it-works).
 
@@ -68,7 +68,8 @@ SCE is deliberately narrow — **one component** meant to sit underneath larger 
 ```bash
 pip install "cryptography>=43" numpy     # AES-GCM-SIV needs cryptography >= 43 (OpenSSL >= 3.2); numpy is only for the demo
 
-python tests/test_core.py                # full suite: 38 tests, incl. adversarial + fuzz
+python tests/test_core.py                # envelope suite: 38 tests, incl. adversarial + fuzz
+python tests/test_stream.py              # chunked-stream suite: 20 tests, incl. structural tamper
 python examples/demo.py                  # narrated walkthrough of the fail-closed behaviour
 ```
 
@@ -102,6 +103,20 @@ except StateSealMismatch:
 - `explain_mismatch(sealed, manifest) -> str` — **opt-in, trusted-context-only** note for a refusal. In v4 it is deliberately **non-diagnostic**: because the envelope records nothing about the sealing environment, it can only confirm structural validity and echo the *presented* MEMH for an out-of-band check — it cannot recover the specific cause. Still never call it on untrusted paths, and `unseal_state` never calls it.
 - Exceptions: `SCEError` (base), `StateSealMismatch`, `MalformedEnvelope`.
 
+### Large states (chunked stream)
+
+A single envelope is capped at ~4 GiB (and by AES-GCM-SIV itself at ~64 GiB). For a state larger than that — a long-context transformer KV-cache, when compact SSM/summarised state isn't an option — seal it as a bound sequence of segments:
+
+```python
+from sce import seal_state_chunked, unseal_state_chunked, describe_stream
+
+container = seal_state_chunked(big_state, manifest, master_secret=SECRET,
+                               context=b"tenant-A", segment_size=64*1024*1024)  # 64 MiB default
+state = unseal_state_chunked(container, manifest, master_secret=SECRET, context=b"tenant-A")
+```
+
+Each segment is a normal SCE4 envelope; the sequence is bound via the `context` channel with a fresh per-container `stream_id`, so **reordering, dropping, truncating, extending, or splicing segments — including from another stream — all fail closed**, as does any environment/epoch/context/secret change or a flipped byte. This is a container layer *above* the envelope: the SCE4 wire format is unchanged. `describe_stream(container) -> dict` reports the non-secret header (segment count and sizes; no `stream_id`, no plaintext). It returns `bytes`, so peak memory is ~state size plus a per-segment transient; a file-backed streaming variant is the natural follow-up for states too large to hold assembled in memory.
+
 ## Test vectors
 
 `test_vectors.json` contains deterministic known-answer values — the canonical manifest bytes, the MEMH, and (for a fixed master secret and a **fixed per-seal salt**) the derived `K_enc` and key commitment — so an independent implementation in another language can verify canonicalisation, MEMH, key derivation, and commitment. The salt is normally random per seal; it is pinned per case here purely so the derived values are reproducible. Nonce and ciphertext are randomised per seal and are therefore not part of the KAT. An independent JavaScript reimplementation (`tools/verify_vectors.js`) reproduces every value, which is the interoperability check.
@@ -117,7 +132,7 @@ This is a reference implementation meant to demonstrate the construction and anc
 - **No replay protection** (see "What it is not").
 - **Side channels.** The AEAD tag check and the constant-time commitment compare are constant-time; surrounding Python is not audited for timing, and the environment fingerprint is not secret.
 - **Metadata at rest.** v4 removes the cleartext environment fingerprint, epoch, and stable commitment, so an envelope no longer carries a tag a holder could link on. One channel remains by construction: the envelope length reveals the sealed payload's size (fixed overhead is 85 bytes = 65-byte header + 4-byte length + 16-byte tag). If size correlation matters for your threat model, pad at the transport layer.
-- **Bounded payload size.** A single sealed envelope is capped at ~4 GiB by the uint32 length frame; oversize input is refused with a clean error, never truncated. SCE's intended home is compact state (recurrent/SSM state or a summary), so in practice this is not a limit — see `bench/kv_cache_reality.py`.
+- **Bounded payload size (per envelope).** A single sealed envelope is capped at ~4 GiB by the uint32 length frame (and by AES-GCM-SIV itself at ~64 GiB); oversize input is refused with a clean error, never truncated. For larger states, `seal_state_chunked` seals a bound sequence of segments with no total-size limit (see [Large states](#large-states-chunked-stream)). SCE's intended home is still compact state (recurrent/SSM state or a summary), where the single-envelope path is more efficient — see `bench/kv_cache_reality.py`.
 - **Integration.** It is not yet wired to a specific inference engine's state-export path. That is where the compact-state fit matters — state-space models or summarised context, rather than a full transformer KV-cache, which is often larger than the text that produced it.
 
 ## License
