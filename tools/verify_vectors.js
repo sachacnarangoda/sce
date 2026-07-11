@@ -16,9 +16,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const DOMAIN = Buffer.from('LDDP-SCE-v3');
-const KDF_INFO_PREFIX = Buffer.from('LDDP-SCE|kdf-v3|');
-const KDF_CANON_TAG = Buffer.from('LDDP-SCE|kdf-canon-v3');
+const DOMAIN = Buffer.from('LDDP-SCE-v4');
+const KDF_INFO_PREFIX = Buffer.from('LDDP-SCE|kdf-v4|');
+const KDF_CANON_TAG = Buffer.from('LDDP-SCE|kdf-canon-v4');
 const MANIFEST_TAG = Buffer.from('SCEMAN1');
 const CORE_FIELDS = ['weights_hash', 'quantization', 'kernel_build_id',
                      'tensor_parallel', 'numerics_mode'];
@@ -65,9 +65,11 @@ function kdfInfo(contextUtf8, epochId, memhBuf) {
 }
 
 // K_enc + commitment -- must match _derive_key_material.
-function deriveKeyMaterial(masterSecretHex, memhBuf, epochId, contextUtf8) {
+// v4: the HKDF-extract salt is the per-seal salt carried in the header (read from
+// the vector), NOT the epoch. The epoch still binds through the info string.
+function deriveKeyMaterial(masterSecretHex, memhBuf, epochId, contextUtf8, saltHex) {
   const master = Buffer.from(masterSecretHex, 'hex');
-  const salt = u64be(epochId);
+  const salt = Buffer.from(saltHex, 'hex');
   const info = kdfInfo(contextUtf8, epochId, memhBuf);
   const material = Buffer.from(crypto.hkdfSync('sha3-256', master, salt, info, 64));
   const kEnc = material.subarray(0, 32);
@@ -93,7 +95,7 @@ function main() {
     checks.push(['MEMH', mh.toString('hex') === c.memh_sha3_256_hex]);
 
     const { kEnc, commitment } = deriveKeyMaterial(
-      c.master_secret_hex, mh, c.epoch_id, c.context_utf8);
+      c.master_secret_hex, mh, c.epoch_id, c.context_utf8, c.salt_hex);
     checks.push(['K_enc', kEnc.toString('hex') === c.k_enc_hex]);
     checks.push(['commitment', commitment.toString('hex') === c.key_commitment_hex]);
 
