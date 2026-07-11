@@ -1,5 +1,5 @@
 """
-Sealed Continuation Envelope (SCE) -- reference implementation (hardened v3)
+Sealed Continuation Envelope (SCE) -- reference implementation (v4 hardened)
 ===========================================================================
 
 SCE binds portable AI inference state (a KV-cache slice, a state-space-model
@@ -41,6 +41,19 @@ raises about v1:
   5. Key separation / blast radius.  A `context` label and an `epoch_id` feed the
      key derivation, so keys can be separated per deployment/tenant and rotated,
      bounding the damage from any single key compromise.
+
+  6. Unlinkable at rest (v4).  Earlier wire versions carried the environment
+     fingerprint (MEMH), the epoch, and a *deterministic* key commitment in the
+     cleartext header, so any party merely *holding* an envelope could cluster
+     envelopes by that stable (MEMH, epoch, commitment) tuple -- exactly the
+     linkage an untrusted relay in LDDP must not be able to perform.  v4 removes
+     all three from cleartext: MEMH and epoch are re-derived by the unsealer and
+     bound only through the key and the associated data, and a fresh per-seal
+     salt feeds the HKDF extract so the derived key *and* the commitment are
+     unique to every seal.  Two seals of the same state under the same key now
+     share no linkable field.  The salt doubles as genuine per-seal key
+     separation, so a nonce repeat is a non-event even before GCM-SIV's own
+     nonce-misuse resistance is considered.
 
 Scope
 -----
@@ -94,35 +107,40 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
-_MAGIC = b"SCE3"
-_VERSION = 3
+_MAGIC = b"SCE4"
+_VERSION = 4
 _NONCE_LEN = 12          # AES-GCM-SIV nonce
+_SALT_LEN = 16           # per-seal HKDF-extract salt (also de-links key + commitment)
 _TAG_LEN = 16            # AES-GCM-SIV authentication tag (128-bit)
 _MEMH_LEN = 32           # SHA3-256
 _COMMIT_LEN = 32         # SHA3-256 key commitment
 _KEY_LEN = 32            # AES-256
-_DOMAIN = b"LDDP-SCE-v3"  # domain-separation label
-_KDF_INFO_PREFIX = b"LDDP-SCE|kdf-v3|"      # fixed prefix on the HKDF info string
-_KDF_CANON_TAG = b"LDDP-SCE|kdf-canon-v3"   # tag on the length-prefixed info canonical form
-_MANIFEST_TAG = b"SCEMAN1"  # canonical-manifest format tag
+_DOMAIN = b"LDDP-SCE-v4"  # domain-separation label
+_KDF_INFO_PREFIX = b"LDDP-SCE|kdf-v4|"      # fixed prefix on the HKDF info string
+_KDF_CANON_TAG = b"LDDP-SCE|kdf-canon-v4"   # tag on the length-prefixed info canonical form
+_MANIFEST_TAG = b"SCEMAN1"  # canonical-manifest format tag (unchanged: MEMH is stable)
 
-# Conservative per-key seal ceiling. GCM-SIV with random 96-bit nonces is safe
-# well beyond plain GCM's birthday bound, but operators SHOULD still rotate the
-# master secret / bump epoch before approaching this, to bound blast radius.
+# Optional per-key seal ceiling. In v4 a fresh per-seal salt feeds the HKDF
+# extract, so every seal uses a unique encryption key and nonce collisions are a
+# non-event; this ceiling is therefore no longer about nonce reuse but is kept as
+# opt-in rotation hygiene (bounding how much rides under one master secret).
 SEAL_COUNT_CEILING_PER_KEY = 1 << 40
 
-# Envelope layout (big-endian):
+# Envelope layout (big-endian). v4 deliberately carries NO environment metadata
+# in cleartext -- MEMH and epoch are re-derived by the unsealer and bound only
+# through the key and the associated data, so a mere holder cannot link envelopes.
 #   -- header prefix (all of it is bound into the AEAD associated data) --
-#   4s  magic       b"SCE3"
-#   B   version     2
-#   32s memh        environment fingerprint the state was sealed under
-#   Q   epoch       epoch the state was sealed under
-#   32s commitment  key commitment (binds the ciphertext to one environment)
-#   12s nonce       AES-GCM-SIV nonce
+#   4s  magic       b"SCE4"
+#   B   version     4
+#   12s nonce       AES-GCM-SIV nonce     (random per seal)
+#   16s salt        HKDF-extract salt     (random per seal; de-links key + commitment)
+#   32s commitment  key commitment        (unique per seal via the salt)
 #   -- framing (not in AAD; ciphertext integrity covered by the AEAD tag) --
 #   I   ct_len      length of the ciphertext+tag
 #   .   ciphertext
-_HEADER_PREFIX = struct.Struct(">4sB32sQ32s12s")   # magic, ver, memh, epoch, commit, nonce
+# MEMH and epoch are folded into the AAD (see _aad), re-derived on unseal, so they
+# still bind in two independent ways (key + AAD) without appearing on the wire.
+_HEADER_PREFIX = struct.Struct(">4sB12s16s32s")    # magic, ver, nonce, salt, commitment
 _CTLEN = struct.Struct(">I")
 
 # The uint32 ct_len frame bounds a single sealed payload. Enforced in seal_state so
@@ -288,29 +306,33 @@ def _kdf_info(context: bytes, epoch_id: int, memh: bytes) -> bytes:
 
 
 def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
-                         context: bytes) -> tuple[bytes, bytes]:
-    """Derive (K_enc, commitment) from the master secret and the environment.
+                         context: bytes, salt: bytes) -> tuple[bytes, bytes]:
+    """Derive (K_enc, commitment) from the master secret, the environment, and a
+    fresh per-seal `salt`.
 
-    Both are HKDF-SHA3-256 outputs over the SAME inputs (master secret, MEMH,
-    epoch, context), so a change to ANY of those changes both. The commitment is
-    SHA3-256 of an INDEPENDENT key half:
+    Both outputs are HKDF-SHA3-256 material over the SAME inputs, so a change to
+    the environment (MEMH), epoch, context, or secret changes both:
 
-        info         = "LDDP-SCE|kdf-v3|" || SHA3-256( LP(context)|LP(epoch)|LP(MEMH) )
-        material     = HKDF(secret, salt=epoch, info=info, len=64)
+        info         = "LDDP-SCE|kdf-v4|" || SHA3-256( LP(context)|LP(epoch)|LP(MEMH) )
+        material     = HKDF(secret, salt=salt, info=info, len=64)
         K_enc        = material[:32]
-        commitment   = SHA3-256(DOMAIN|"commit"|material[32:])
+        commitment   = SHA3-256(DOMAIN|"|commit|"|material[32:])
 
-    The `info` string is built from length-prefixed fields (see `_kdf_info`), so
-    it is unambiguous by construction rather than by the incidental fact that
-    MEMH is fixed-width and terminal. This gives a binding, hiding commitment to
-    the key material:
+    `salt` is the per-seal random salt carried in the envelope header. Using it as
+    the HKDF-extract salt (its RFC 5869 role) makes K_enc unique to each seal,
+    which (a) removes any dependence on GCM-SIV nonce uniqueness for safety and
+    (b) makes the commitment fresh per seal -- so the commitment is no longer a
+    stable, linkable tag, while remaining a binding, hiding commitment to the key
+    material:
       * hiding   -- the committed half is independent of K_enc, so publishing the
                     commitment reveals nothing usable about the encryption key;
       * binding  -- a different environment yields different HKDF output, hence a
-                    different commitment; producing one ciphertext that opens
-                    under two environments would require a SHA3-256 collision on
-                    the committed half (infeasible). This is what makes the
-                    scheme key-committing, which a plain AEAD is not.
+                    different commitment; one ciphertext opening under two
+                    environments would need a SHA3-256 collision on the committed
+                    half (infeasible). This is what makes the scheme key-committing.
+    The environment (MEMH/epoch/context) binds through `info`; the salt only adds
+    freshness and binds nothing about the environment, so unlinkability does not
+    weaken the fail-closed guarantee.
     """
     if not isinstance(master_secret, (bytes, bytearray)):
         raise SCEError(
@@ -324,7 +346,7 @@ def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
     material = HKDF(
         algorithm=hashes.SHA3_256(),
         length=_KEY_LEN * 2,
-        salt=epoch_id.to_bytes(8, "big"),
+        salt=salt,
         info=info,
     ).derive(master_secret)
     k_enc = material[:_KEY_LEN]
@@ -333,11 +355,17 @@ def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
     return k_enc, commitment
 
 
-def _aad(header_prefix: bytes) -> bytes:
-    """Associated data = domain label + the entire header prefix (magic,
-    version, MEMH, epoch, commitment, nonce). Binding the whole prefix makes the
-    header tamper-evident; any change to it fails closed."""
-    return _DOMAIN + b"|hdr|" + header_prefix
+def _aad(header_prefix: bytes, memh: bytes, epoch_id: int) -> bytes:
+    """Associated data = domain label + the cleartext header prefix (magic,
+    version, nonce, salt, commitment) + the re-derived MEMH and epoch.
+
+    MEMH and epoch are authenticated here but are NOT part of the on-wire header:
+    the unsealer reconstructs them from the caller-supplied manifest and epoch.
+    This gives the environment two independent bindings (it derives the key AND is
+    authenticated data) while keeping it off the wire, so a holder cannot read or
+    link it. Any change to the header, MEMH, or epoch fails closed.
+    """
+    return _DOMAIN + b"|hdr|" + header_prefix + memh + epoch_id.to_bytes(8, "big")
 
 
 # --------------------------------------------------------------------------- #
@@ -388,10 +416,11 @@ def seal_state(
     _check_epoch(epoch_id)
 
     memh = manifest.memh()
-    k_enc, commitment = _derive_key_material(master_secret, memh, epoch_id, bytes(context))
+    salt = os.urandom(_SALT_LEN)
     nonce = os.urandom(_NONCE_LEN)
-    prefix = _HEADER_PREFIX.pack(_MAGIC, _VERSION, memh, epoch_id, commitment, nonce)
-    ciphertext = AESGCMSIV(k_enc).encrypt(nonce, bytes(state), _aad(prefix))
+    k_enc, commitment = _derive_key_material(master_secret, memh, epoch_id, bytes(context), salt)
+    prefix = _HEADER_PREFIX.pack(_MAGIC, _VERSION, nonce, salt, commitment)
+    ciphertext = AESGCMSIV(k_enc).encrypt(nonce, bytes(state), _aad(prefix, memh, epoch_id))
     return prefix + _CTLEN.pack(len(ciphertext)) + ciphertext
 
 
@@ -404,7 +433,7 @@ def _parse(sealed: bytes):
     fields = _HEADER_PREFIX.unpack(prefix)
     magic, version = fields[0], fields[1]
     if magic != _MAGIC:
-        raise MalformedEnvelope("bad magic: not an SCE v3 envelope")
+        raise MalformedEnvelope("bad magic: not an SCE v4 envelope")
     if version != _VERSION:
         raise MalformedEnvelope(f"unsupported SCE envelope version {version}")
     off = _HEADER_PREFIX.size
@@ -439,13 +468,15 @@ def unseal_state(
     _check_epoch(epoch_id)
 
     prefix, fields, ciphertext = _parse(sealed)
-    _magic, _ver, _memh_adv, _epoch_adv, commit_stored, nonce = fields
+    _magic, _ver, nonce, salt, commit_stored = fields
 
     # Everything security-relevant is recomputed from the caller-supplied
-    # environment; the header is authenticated but never trusted as truth.
+    # environment; the header carries no environment metadata to trust. The salt
+    # is the only per-seal input read from the header, and it binds nothing about
+    # the environment -- it only adds freshness both sides agree on.
     memh_present = manifest.memh()
     k_enc, commit_expected = _derive_key_material(
-        master_secret, memh_present, epoch_id, bytes(context)
+        master_secret, memh_present, epoch_id, bytes(context), salt
     )
 
     # Key-commitment check, constant time. If the environment (or epoch/context/
@@ -454,9 +485,12 @@ def unseal_state(
     commitment_ok = hmac.compare_digest(commit_stored, commit_expected)
 
     # Always attempt the AEAD open too, so timing does not distinguish the two
-    # failure modes; combine the outcomes into one uniform result.
+    # failure modes; combine the outcomes into one uniform result. The re-derived
+    # MEMH and epoch enter through the associated data.
     try:
-        plaintext = AESGCMSIV(k_enc).decrypt(nonce, ciphertext, _aad(prefix))
+        plaintext = AESGCMSIV(k_enc).decrypt(
+            nonce, ciphertext, _aad(prefix, memh_present, epoch_id)
+        )
         aead_ok = True
     except InvalidTag:
         plaintext = None
@@ -472,40 +506,43 @@ def unseal_state(
 # --------------------------------------------------------------------------- #
 def describe_envelope(sealed: bytes) -> Dict[str, Any]:
     """Return the non-secret, structural header fields of a sealed envelope.
-    Reveals nothing about the plaintext and needs no key."""
-    prefix, fields, _ct = _parse(sealed)
-    magic, version, memh_adv, epoch_adv, commit_stored, _nonce = fields
+
+    Reveals nothing about the plaintext and needs no key. By design (v4) it also
+    reveals nothing about the environment, epoch, or context the state was sealed
+    under -- those are not on the wire -- so its output cannot be used to link or
+    cluster a holder's envelopes. Only the format identity and sizes are exposed.
+    """
+    _prefix, fields, _ct = _parse(sealed)
+    magic, version, _nonce, _salt, _commit = fields
     return {
         "magic": magic.decode("ascii", "replace"),
         "version": version,
-        "sealed_under_memh": memh_adv.hex(),
-        "sealed_under_epoch": epoch_adv,
-        "key_commitment": commit_stored.hex(),
         "ciphertext_bytes": len(_ct),
         "total_envelope_bytes": len(sealed),
     }
 
 
 def explain_mismatch(sealed: bytes, manifest: ModelManifest) -> str:
-    """Opt-in, human-readable reason for a refusal, for TRUSTED debugging/logs
-    only. Uses only non-secret data (the advisory header MEMH vs the presented
-    manifest's MEMH). MUST NOT be exposed to untrusted callers: revealing why a
-    seal failed is an oracle. `unseal_state` never calls this.
+    """Opt-in, human-readable note for a refusal, for TRUSTED debugging/logs only.
+
+    In v4 the envelope records nothing in cleartext about the environment, epoch,
+    or context it was sealed under -- that is what stops an untrusted holder from
+    linking envelopes -- so, unlike earlier versions, this helper CANNOT identify
+    the specific cause of a refusal from the envelope alone. It confirms structural
+    validity and echoes the presented environment's MEMH for an out-of-band check.
+    It still MUST NOT be exposed to untrusted callers, and `unseal_state` never
+    calls it.
     """
     try:
-        _prefix, fields, _ct = _parse(sealed)
+        _parse(sealed)
     except MalformedEnvelope as e:
         return f"not a valid SCE envelope: {e}"
-    memh_adv = fields[2]
     memh_present = manifest.memh()
-    if memh_adv != memh_present:
-        return (
-            "model execution environment differs from the one the state was "
-            f"sealed under (sealed MEMH {memh_adv.hex()[:16]}..., current "
-            f"MEMH {memh_present.hex()[:16]}...). If this is unexpected, the "
-            "model/quantisation/kernel/topology/numerics changed."
-        )
     return (
-        "environment fingerprint matches; a refusal here indicates a different "
-        "epoch or deployment context, a wrong master secret, or tampering."
+        "refused under the presented environment (MEMH "
+        f"{memh_present.hex()[:16]}...). SCE v4 does not record the sealing "
+        "environment/epoch/context in the envelope -- by design, to keep envelopes "
+        "unlinkable -- so the specific cause cannot be recovered from the bytes. "
+        "Verify the manifest, epoch, context, and master secret against the "
+        "sealing side out of band."
     )
