@@ -1,5 +1,5 @@
 """
-Test suite for the Sealed Continuation Envelope (hardened v3).
+Test suite for the Sealed Continuation Envelope (v4).
 
 Runs WITHOUT pytest:  python tests/test_core.py
 
@@ -8,8 +8,10 @@ Sections:
   B. Fail-closed binding .... every environment factor, epoch, context, secret
   C. Tamper-evidence ........ ciphertext and every header field
   D. Adversarial hardening .. nonce-misuse, key-commitment/cross-key, canonical
-                              ambiguity, oracle-free uniform failure
+                              ambiguity, oracle-free uniform failure, v4 de-link
+                              (unlinkability at rest), cross-version rejection
   E. Robustness ............. malformed input, large state, type validation
+  F. Regression ............. one guard per code-review finding
 """
 
 import os
@@ -65,15 +67,19 @@ def test_memh_is_deterministic_and_order_independent():
     assert len(compute_memh(a)) == 32
 
 
-def test_describe_envelope_reveals_no_plaintext():
+def test_describe_envelope_reveals_no_plaintext_or_environment():
     m = base_manifest()
     secret = b"THE-SECRET-STATE-SHOULD-NOT-APPEAR"
     sealed = seal_state(secret, m, master_secret=MASTER, epoch_id=5)
     info = describe_envelope(sealed)
     assert secret not in repr(info).encode()
-    assert info["sealed_under_epoch"] == 5
-    assert info["magic"] == "SCE3"
-    assert len(bytes.fromhex(info["key_commitment"])) == 32
+    assert info["magic"] == "SCE4"
+    assert info["version"] == 4
+    # v4 de-link: the envelope exposes NOTHING about the sealing environment/epoch
+    assert "sealed_under_memh" not in info
+    assert "sealed_under_epoch" not in info
+    # and the MEMH itself never appears in the envelope bytes
+    assert m.memh() not in sealed
 
 
 # ===================== B. FAIL-CLOSED BINDING ======================== #
@@ -155,15 +161,15 @@ def test_tamper_in_every_header_byte_is_detected():
     since that is a structural check) and confirm each fails closed."""
     m = base_manifest()
     good = seal_state(b"state", m, master_secret=MASTER)
-    # offsets: magic[0:4] ver[4] memh[5:37] epoch[37:45] commit[45:77] nonce[77:89]
-    for off in (5, 40, 50, 77):  # inside memh, epoch, commitment, nonce
+    # v4 layout: magic[0:4] ver[4] nonce[5:17] salt[17:33] commitment[33:65] ...ct
+    for off in (6, 20, 40, 70):  # inside nonce, salt, commitment, ciphertext
         sealed = bytearray(good)
         sealed[off] ^= 0x01
         try:
             unseal_state(bytes(sealed), m, master_secret=MASTER)
         except (StateSealMismatch, MalformedEnvelope):
             continue
-        raise AssertionError(f"SECURITY FAILURE: tampered header byte {off} accepted")
+        raise AssertionError(f"SECURITY FAILURE: tampered byte {off} accepted")
 
 
 # ===================== D. ADVERSARIAL HARDENING ====================== #
@@ -176,10 +182,14 @@ def test_nonce_reuse_is_not_catastrophic():
     """
     m = base_manifest()
     memh = m.memh()
-    k_enc, commitment = core._derive_key_material(MASTER, memh, 0, b"")
+    # In v4 the key is derived with a per-seal salt, so a nonce repeat alone does
+    # not even reuse the key. To exercise GCM-SIV's nonce-misuse resistance we pin
+    # BOTH the salt and the nonce (same key AND same nonce).
+    fixed_salt = b"\x05" * core._SALT_LEN
     fixed_nonce = b"\x07" * core._NONCE_LEN
-    prefix = core._HEADER_PREFIX.pack(core._MAGIC, core._VERSION, memh, 0, commitment, fixed_nonce)
-    aad = core._aad(prefix)
+    k_enc, commitment = core._derive_key_material(MASTER, memh, 0, b"", fixed_salt)
+    prefix = core._HEADER_PREFIX.pack(core._MAGIC, core._VERSION, fixed_nonce, fixed_salt, commitment)
+    aad = core._aad(prefix, memh, 0)
     from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
     c1 = AESGCMSIV(k_enc).encrypt(fixed_nonce, b"plaintext-ONE", aad)
     c2 = AESGCMSIV(k_enc).encrypt(fixed_nonce, b"plaintext-TWO", aad)
@@ -209,13 +219,55 @@ def test_commitment_tamper_fails_closed():
     silently ignored)."""
     m = base_manifest()
     sealed = bytearray(seal_state(b"state", m, master_secret=MASTER))
-    # commitment occupies bytes [45:77]
-    sealed[46] ^= 0xFF
+    # v4: commitment occupies bytes [33:65]
+    sealed[40] ^= 0xFF
     try:
         unseal_state(bytes(sealed), m, master_secret=MASTER)
     except StateSealMismatch:
         return
     raise AssertionError("SECURITY FAILURE: tampered commitment accepted")
+
+
+def test_commitment_is_unlinkable_across_seals():
+    """v4 de-link: two seals of the SAME state under the SAME (secret, manifest,
+    epoch, context) must NOT share the stored commitment. A stable commitment
+    would let a holder link a user's envelopes. Both must still round-trip."""
+    m = base_manifest()
+    s1 = seal_state(b"identical-state", m, master_secret=MASTER, epoch_id=3, context=b"tenant-A")
+    s2 = seal_state(b"identical-state", m, master_secret=MASTER, epoch_id=3, context=b"tenant-A")
+    lo = core._HEADER_PREFIX.size - core._COMMIT_LEN
+    hi = core._HEADER_PREFIX.size
+    assert s1[lo:hi] != s2[lo:hi], "commitment is a stable, linkable tag across seals"
+    assert s1 != s2
+    assert unseal_state(s1, m, master_secret=MASTER, epoch_id=3, context=b"tenant-A") == b"identical-state"
+    assert unseal_state(s2, m, master_secret=MASTER, epoch_id=3, context=b"tenant-A") == b"identical-state"
+
+
+def test_envelope_exposes_no_environment_metadata():
+    """v4 de-link: the MEMH must not appear anywhere in the envelope bytes, and
+    describe_envelope must expose no sealed-under environment/epoch fields. The
+    per-seal nonce and salt must differ across seals so nothing is stable."""
+    m = base_manifest()
+    memh = m.memh()
+    s1 = seal_state(b"state-one", m, master_secret=MASTER, epoch_id=7, context=b"ctx")
+    s2 = seal_state(b"state-two", m, master_secret=MASTER, epoch_id=7, context=b"ctx")
+    assert memh not in s1 and memh not in s2, "MEMH leaked into the envelope cleartext"
+    info = describe_envelope(s1)
+    assert "sealed_under_memh" not in info and "sealed_under_epoch" not in info
+    # nonce[5:17] and salt[17:33] are random per seal
+    assert s1[5:17] != s2[5:17], "nonce is not fresh per seal"
+    assert s1[17:33] != s2[17:33], "salt is not fresh per seal"
+
+
+def test_v3_envelope_is_rejected_by_v4():
+    """Cross-version safety: a v3-magic envelope must be refused by v4 code (fail
+    closed), never mis-parsed. Magic separation makes this automatic."""
+    faux_v3 = b"SCE3" + os.urandom(120)   # right shape, wrong version
+    try:
+        unseal_state(faux_v3, base_manifest(), master_secret=MASTER)
+    except (MalformedEnvelope, StateSealMismatch):
+        return
+    raise AssertionError("a v3-magic envelope was not rejected by v4")
 
 
 def test_manifest_theft_and_brute_force_fails():
@@ -296,7 +348,8 @@ def test_kdf_info_is_unambiguous():
     ]
     infos = [core._kdf_info(c, e, m) for (c, e, m) in triples]
     assert len(set(infos)) == len(infos), "kdf info string is not injective"
-    keys = [core._derive_key_material(MASTER, m, e, c)[0] for (c, e, m) in triples]
+    fixed_salt = b"\x00" * core._SALT_LEN
+    keys = [core._derive_key_material(MASTER, m, e, c, fixed_salt)[0] for (c, e, m) in triples]
     assert len(set(keys)) == len(keys), "distinct inputs produced a colliding key"
 
 
@@ -346,7 +399,9 @@ def test_failure_is_uniform_no_oracle():
 
 def test_explain_mismatch_is_opt_in_only():
     """The detailed reason must come only from the explicit helper, never from
-    the exception raised by unseal_state."""
+    the exception raised by unseal_state. In v4 the helper is deliberately
+    non-diagnostic (the envelope carries no environment metadata); it echoes the
+    presented MEMH for an out-of-band check."""
     m = base_manifest()
     sealed = seal_state(b"state", m, master_secret=MASTER)
     drifted = base_manifest(weights_hash="sha3:different")
@@ -355,8 +410,9 @@ def test_explain_mismatch_is_opt_in_only():
         unseal_state(sealed, drifted, master_secret=MASTER)
     except StateSealMismatch as e:
         assert "MEMH" not in str(e) and "weights" not in str(e)
-    # ...but the opt-in helper gives detail
-    assert "environment" in explain_mismatch(sealed, drifted).lower()
+    # ...the opt-in helper returns a by-design note referencing the presented env
+    exp = explain_mismatch(sealed, drifted)
+    assert drifted.memh().hex()[:16] in exp
 
 
 # ===================== E. ROBUSTNESS ================================ #
