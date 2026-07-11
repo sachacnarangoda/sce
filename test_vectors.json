@@ -1,14 +1,14 @@
 {
-  "description": "SCE v3 known-answer vectors. Deterministic values for cross-language verification.",
-  "envelope_magic": "SCE3",
+  "description": "SCE v4 known-answer vectors. Deterministic values for cross-language verification.",
+  "envelope_magic": "SCE4",
   "aead": "AES-256-GCM-SIV (RFC 8452)",
   "hash": "SHA3-256",
   "kdf": "HKDF-SHA3-256",
-  "domain": "LDDP-SCE-v3",
+  "domain": "LDDP-SCE-v4",
   "manifest_canonical_format": "SCEMAN1: tag, then each core field as uint32-BE length + NFC-UTF8 bytes (fixed order), then uint32-BE count of extra items, then each sorted key/value length-prefixed",
-  "kdf_info": "info = 'LDDP-SCE|kdf-v3|' || SHA3-256('LDDP-SCE|kdf-canon-v3' || LP(context) || LP(epoch_be) || LP(MEMH)); LP(x)=uint32-BE(len)||x",
-  "commitment": "SHA3-256(DOMAIN|'commit'|HKDF_material[32:64]); material = HKDF-SHA3-256(master, salt=epoch_be, info=<above>, len=64)",
-  "note": "nonce and ciphertext are randomised per seal and are NOT part of the KAT.",
+  "kdf_info": "info = 'LDDP-SCE|kdf-v4|' || SHA3-256('LDDP-SCE|kdf-canon-v4' || LP(context) || LP(epoch_be) || LP(MEMH)); LP(x)=uint32-BE(len)||x",
+  "commitment": "SHA3-256(DOMAIN|'|commit|'|HKDF_material[32:64]); material = HKDF-SHA3-256(master, salt=salt (per-seal, from header), info=<above>, len=64)",
+  "note": "v4 carries no MEMH/epoch in cleartext; MEMH+epoch are re-derived on unseal and bound via the AEAD associated data. 'salt' is the per-seal HKDF-extract salt (fixed here per case for determinism); nonce and ciphertext are randomised per seal and are NOT part of the KAT.",
   "cases": [
     {
       "manifest": {
@@ -24,8 +24,9 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "",
-      "k_enc_hex": "9778656ff48cf9bbc8b1151d198251140af6fda13787a19e702c9ad2787e2f4e",
-      "key_commitment_hex": "6793b5fb3df2cab3015332eb83362e49bb7f2a3299328a491affa0779a899065"
+      "salt_hex": "00000000000000000000000000000000",
+      "k_enc_hex": "832fbf5a1081e9e10da372cdcfb7a103734e77bf40a2a0a6e0c8e1b0c06618c1",
+      "key_commitment_hex": "6e5d798ca8d7ff567bd2b03bc4a25e8ccb20da19b7c4a3c5259b0fa745532a0b"
     },
     {
       "manifest": {
@@ -41,8 +42,9 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "tenant-A",
-      "k_enc_hex": "5960af2f876970dad5c07326421e35da817aa28e514f1f34e82a2da92bc2169d",
-      "key_commitment_hex": "d47278b482c5b66d7f476b032ae03b08c7a9e28e6843acc5e4ebd8b7d027cff3"
+      "salt_hex": "01010101010101010101010101010101",
+      "k_enc_hex": "526b6d443fbb838469e378acc3343a080662b9f9324ed33f6fec8f8ab0e48906",
+      "key_commitment_hex": "577351efa9f924c2616d7b55fce02a2a8593f986071498355edf70a24ae482de"
     },
     {
       "manifest": {
@@ -58,8 +60,9 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "",
-      "k_enc_hex": "a2289707a979d7f8dfbe02c1ed56c214279b6a9013e604ef1f330c259974842c",
-      "key_commitment_hex": "4f7b9046e51b0fb8e1d15a9def423a8d56213d18c04af098a2dd2c50ee6a2166"
+      "salt_hex": "02020202020202020202020202020202",
+      "k_enc_hex": "6f0505bfa7f722c35f352bd2870599b28f98ef284e26e251e3300ee9bca692d5",
+      "key_commitment_hex": "ef911c0ac914c1e875325285a554398aef909aa89fdb4872b971fb3a43bd03e2"
     },
     {
       "manifest": {
@@ -75,8 +78,9 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "tenant-A",
-      "k_enc_hex": "1adc4328d9a7901e2e6aa45ba733cc12116951c5dfcb88fa6c7dfafeb672cf2c",
-      "key_commitment_hex": "5a249d07d4bffcafa03707b58502743a9e3a59b6191f72f9a70049745c1d4de3"
+      "salt_hex": "03030303030303030303030303030303",
+      "k_enc_hex": "3ba6b8767ddf37d279f6707543ea7cd9a80848383be5511f6bd4e5577d6130b6",
+      "key_commitment_hex": "37245374b3463958858b3edf2da126dee61f8109ea0b316a07476bc5019ab584"
     },
     {
       "manifest": {
@@ -94,8 +98,9 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "",
-      "k_enc_hex": "c131ceffdd90a665562cad5f747488bee8832e2d84d5f4d1081d870dfa2b12d0",
-      "key_commitment_hex": "3ab00c435c07f829ec6ac06688938dd66901154e7411d9f6057a71889387cfbd"
+      "salt_hex": "04040404040404040404040404040404",
+      "k_enc_hex": "e46e6e47ca5fd9484b877dade507be82fbe6900fd8e36c059535da0f23e5fd07",
+      "key_commitment_hex": "9592bb1ec0a79bee492d811a518035ae7747d9cae841a43fe3e7e3c18d33e5b6"
     },
     {
       "manifest": {
@@ -113,8 +118,9 @@
       "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
       "epoch_id": 0,
       "context_utf8": "tenant-A",
-      "k_enc_hex": "6813fed883d6814f480a96bdbce495adcee0c84d641c994cd8cae84b4be29c75",
-      "key_commitment_hex": "8d10a2da5b997be4e1ebb5b938179eacf27b91998aec5e4230701d1a03b8238f"
+      "salt_hex": "05050505050505050505050505050505",
+      "k_enc_hex": "f6211d828a14608147a1737cdfaab2ffb175e4513e07c67255f5dc58d3cbea94",
+      "key_commitment_hex": "4cbc90b396e2c09859a913a791a4a547b50456f3c4114b8582f79f4aa0f6869f"
     }
   ]
 }
