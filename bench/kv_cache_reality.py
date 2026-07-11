@@ -31,7 +31,7 @@ from sce import ModelManifest, seal_state, unseal_state  # noqa: E402
 MASTER = os.urandom(32)
 MANIFEST = ModelManifest("sha3:model-v1", "bf16", "vllm-0.6.3+abc", "tp=1,pp=1", "bf16")
 
-# SCE fixed overhead = header prefix (89) + ct_len (4) + AEAD tag (16).
+# SCE fixed overhead = header prefix (65) + ct_len (4) + AEAD tag (16).
 import sce.core as core  # noqa: E402
 FIXED_OVERHEAD = core._HEADER_PREFIX.size + core._CTLEN.size + core._TAG_LEN
 
@@ -70,7 +70,7 @@ def human(n):
 
 
 def main():
-    print("SCE fixed overhead: %d bytes (89 header + 4 length + 16 AEAD tag), "
+    print("SCE fixed overhead: %d bytes (65 header + 4 length + 16 AEAD tag), "
           "independent of state size.\n" % FIXED_OVERHEAD)
 
     # Calibrate throughput on a real 128 MB blob, for extrapolating GB-scale rows.
