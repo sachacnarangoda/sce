@@ -23,6 +23,9 @@ jobs:
       - name: Run test suite
         run: python tests/test_core.py
 
+      - name: Run chunked-stream test suite
+        run: python tests/test_stream.py
+
       - name: Run fail-closed demo
         run: python examples/demo.py
 
