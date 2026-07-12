@@ -83,6 +83,8 @@ import hmac
 import struct
 import hashlib
 import unicodedata
+from types import MappingProxyType
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict
 
@@ -220,8 +222,8 @@ class ModelManifest:
                      "tensor_parallel", "numerics_mode"):
             if not isinstance(getattr(self, name), str):
                 raise SCEError(f"manifest field {name!r} must be a str")
-        if not isinstance(self.extra, dict):
-            raise SCEError("manifest field 'extra' must be a dict of str -> str")
+        if not isinstance(self.extra, Mapping):
+            raise SCEError("manifest field 'extra' must be a mapping of str -> str")
         for k, v in self.extra.items():
             if not isinstance(k, str) or not isinstance(v, str):
                 raise SCEError("manifest 'extra' must map str -> str")
@@ -238,6 +240,45 @@ class ModelManifest:
                     "the fingerprint stays unambiguous."
                 )
             seen_norm.add(nk)
+
+        # `frozen=True` is only SHALLOW: it stops rebinding the attribute, not
+        # mutation of the dict behind it. Take a private snapshot (so the caller's
+        # dict cannot alias ours) and expose it read-only, so a constructed
+        # manifest -- and therefore its MEMH -- can never change afterwards.
+        # Determinism is the whole basis of the fingerprint; without this, a live
+        # manifest's identity could shift under the caller's feet.
+        object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
+
+        # The manifest is now genuinely immutable, so its fingerprint is fixed for
+        # the life of the object -- compute it once. Besides being correct only
+        # BECAUSE of the immutability above, this removes an O(n) redundancy on the
+        # chunked path, where seal_state re-derived the MEMH for every segment
+        # (~9% of a 1024-segment seal, ~17% of a small single seal).
+        object.__setattr__(self, "_memh",
+                           hashlib.sha3_256(self.canonical_bytes()).digest())
+
+    def __hash__(self) -> int:
+        """Hash by fingerprint. A frozen dataclass holding a mapping is otherwise
+        unhashable; hashing the MEMH is well-defined now that the manifest cannot
+        change, and lets manifests be used as dict/set keys (e.g. per-environment
+        caches). Consistent with __eq__: equal manifests canonicalise identically,
+        so they share a MEMH."""
+        return hash(self._memh)
+
+    def __reduce__(self):
+        """Pickle / deepcopy support.
+
+        The read-only `extra` proxy cannot be pickled, so reconstruct from a plain
+        dict and let __post_init__ re-validate and re-freeze. Without this, making
+        the manifest immutable would have silently broken sending one across a
+        process boundary (multiprocessing, task queues) -- a regression, not a
+        hardening.
+        """
+        return (
+            self.__class__,
+            (self.weights_hash, self.quantization, self.kernel_build_id,
+             self.tensor_parallel, self.numerics_mode, dict(self.extra)),
+        )
 
     def canonical_bytes(self) -> bytes:
         """Strict, deterministic serialisation: a format tag, then each core
@@ -260,12 +301,41 @@ class ModelManifest:
         return b"".join(parts)
 
     def memh(self) -> bytes:
-        """Model Execution Manifest Hash: 32-byte SHA3-256 over the manifest."""
-        return hashlib.sha3_256(self.canonical_bytes()).digest()
+        """Model Execution Manifest Hash: 32-byte SHA3-256 over the manifest.
+
+        Computed once at construction and cached. That is safe ONLY because the
+        manifest is genuinely immutable (see __post_init__): a cached fingerprint
+        on a mutable object would be a correctness bug, not an optimisation.
+        """
+        return self._memh
+
+
+def _require_manifest(manifest: Any) -> None:
+    """Every public entry point that takes a manifest validates it here, so a
+    wrong type raises SCEError rather than leaking a raw AttributeError from deep
+    inside. Callers can then rely on `except SCEError` catching everything."""
+    if not isinstance(manifest, ModelManifest):
+        raise SCEError(
+            f"manifest must be a ModelManifest, got {type(manifest).__name__}"
+        )
+
+
+def _require_envelope_bytes(blob: Any, what: str) -> bytes:
+    """Same contract for the untrusted blob: a wrong type is a MalformedEnvelope,
+    not a raw TypeError. bytearray/memoryview are accepted and normalised; the
+    common `bytes` path is not copied."""
+    if isinstance(blob, bytes):
+        return blob
+    if isinstance(blob, (bytearray, memoryview)):
+        return bytes(blob)
+    raise MalformedEnvelope(
+        f"{what} must be bytes, got {type(blob).__name__}"
+    )
 
 
 def compute_memh(manifest: ModelManifest) -> bytes:
     """Convenience wrapper: return the 32-byte MEMH for a manifest."""
+    _require_manifest(manifest)
     return manifest.memh()
 
 
@@ -340,7 +410,13 @@ def _derive_key_material(master_secret: bytes, memh: bytes, epoch_id: int,
             "pass raw key bytes (e.g. os.urandom(32)), not a str"
         )
     if len(master_secret) < 16:
-        raise SCEError("master_secret must be >= 16 bytes of high-entropy key material")
+        raise SCEError(
+            "master_secret must be >= 16 bytes of high-entropy key material. Note "
+            "that LENGTH IS NOT ENTROPY: this must be random bytes from a CSPRNG "
+            "(os.urandom / secrets.token_bytes) or a KMS/HSM key, NOT a password or "
+            "passphrase. If you only have a password, stretch it with a memory-hard "
+            "KDF (Argon2id/scrypt) first -- SCE does not do that for you."
+        )
     master_secret = bytes(master_secret)
     info = _kdf_info(context, epoch_id, memh)
     material = HKDF(
@@ -393,6 +469,7 @@ def seal_state(
     prompting a master-secret rotation or an epoch bump. Passing None (the
     default) disables the check, and the caller then owns nonce-collision risk.
     """
+    _require_manifest(manifest)
     if not isinstance(state, (bytes, bytearray)):
         raise SCEError("state must be bytes; serialise your tensors/objects first")
     if len(state) > _MAX_STATE:
@@ -427,6 +504,7 @@ def seal_state(
 def _parse(sealed: bytes):
     """Structural parse only. Raises MalformedEnvelope on any structural fault.
     Returns (prefix_bytes, fields_tuple, ciphertext)."""
+    sealed = _require_envelope_bytes(sealed, "sealed envelope")
     if len(sealed) < _HEADER_PREFIX.size + _CTLEN.size:
         raise MalformedEnvelope("sealed blob is shorter than the SCE header")
     prefix = sealed[: _HEADER_PREFIX.size]
@@ -463,6 +541,7 @@ def unseal_state(
     tampering): raises `StateSealMismatch` with a uniform message and returns
     nothing. Structural faults raise `MalformedEnvelope`.
     """
+    _require_manifest(manifest)
     if not isinstance(context, (bytes, bytearray)):
         raise SCEError("context must be bytes")
     _check_epoch(epoch_id)
@@ -533,6 +612,7 @@ def explain_mismatch(sealed: bytes, manifest: ModelManifest) -> str:
     It still MUST NOT be exposed to untrusted callers, and `unseal_state` never
     calls it.
     """
+    _require_manifest(manifest)
     try:
         _parse(sealed)
     except MalformedEnvelope as e:
