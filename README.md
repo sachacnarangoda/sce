@@ -3,6 +3,24 @@
 
 **A small cryptographic primitive that makes portable AI inference state fail *closed* when the model changes underneath it — instead of resuming into silent, undetectable corruption.**
 
+## The idea in one picture
+
+A homing pigeon carries a message capsule between two parties who never meet. It doesn't know who sent the message, it can't read what it carries, and it has nothing worth selling.
+
+**SCE is the capsule — not the pigeon.**
+
+- **It opens under exactly one environment.** Not "for the right person," but under a byte-identical model, quantisation, kernel build, topology and numerics. Change any of them and the state does not open. It doesn't half-open. It doesn't hand back plausible-looking corruption. It refuses, loudly, every time.
+- **No two envelopes look alike.** Seal the same state twice and the two envelopes share no field — no environment fingerprint, no epoch, no stable tag. A relay holding a thousand of them cannot tell which two are yours.
+- **The carrier holds nothing worth having.** It cannot read the state, alter it, or re-bind it to a different environment. Any tampering fails closed.
+
+And one thing SCE deliberately does **not** do:
+
+- **It doesn't hide the pigeon.** Unmarked bytes buy you nothing if someone can see which loft the bird left from. Concealing the *route* is the transport's job, not the envelope's — and that is what the wider **Linked Dead-Drop Protocol (LDDP)** is for. Read [Boundaries](#boundaries) before relying on this.
+
+> **SCE seals the capsule. LDDP hides the flight.**
+
+---
+
 Status: **reference / proof-of-concept (v4).** Correct and tested (**77 tests**: a 38-test envelope suite, a 20-test chunked-stream suite, and a 19-test hardening harness, plus a sabotage suite that verifies the tests actually catch security regressions and a fuzz target with a replayed regression corpus — covering adversarial cases, a manifest-theft/brute-force simulation, unlinkability regressions, exhaustive single-bit mutation of every envelope and container byte, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
 
 **[`SPEC.md`](SPEC.md)** is the normative wire-format and algorithm specification: an independent implementation written from that document alone must interoperate byte-for-byte and reproduce the test vectors. `tools/verify_vectors.js` is exactly that — an independent JavaScript implementation — and it does.
@@ -141,6 +159,7 @@ Beyond the behavioural suites, SCE carries an automated security-verification la
 
 This is a reference implementation meant to demonstrate the construction and anchor discussion — **not** a production library. Honest limitations:
 
+- **No transport-level anonymity — the unlinkability claim is about bytes, not about the channel.** v4 went to the trouble of a breaking wire change to strip every linkable field from the envelope, so a relay cannot cluster your sessions *from the envelopes themselves*. That is worth having, and it is **not enough on its own**: a relay that sees network identity — your source IP, your TLS session, your account credential, even your connection timing — links your envelopes anyway, and no wire format can stop it. Unlinkability at rest is **necessary but not sufficient**; it only pays off when composed with an anonymising transport (a mixnet, onion routing, or a genuine dead drop where sender and recipient never connect directly). Ship SCE over an ordinary logged-in HTTPS session to a provider and you get *none* of the unlinkability benefit, however clean the bytes are. **SCE seals the capsule; it does not disguise the pigeon.** That layer is what LDDP is for, and it is not in this repository.
 - **Not independently audited.** The construction is standard and tested, but it has not had external cryptographic review. That review is a prerequisite for production use.
 - **In-use plaintext.** SCE protects state at rest and between turns, not while the model computes on it. Defeating in-use exposure requires a TEE or homomorphic encryption.
 - **Memory hygiene.** This is Python; key material and plaintext live in immutable `bytes` that cannot be reliably zeroised. A production port (e.g. Rust) should wipe secrets after use.
