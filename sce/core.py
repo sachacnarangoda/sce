@@ -61,6 +61,16 @@ This module implements ONLY the fail-closed, committing, version-binding seal.
 By design it has no transport, no mixnet, no anonymity layer, and no network
 code.  It is meant to sit *underneath* those systems.
 
+That boundary bears directly on point 6 above: the unlinkability property is a
+property of the BYTES, not of the CHANNEL.  An adversary who can correlate
+network identity -- source IP, TLS session, account credential, connection
+timing -- links a user's envelopes no matter how clean the envelope is, and no
+wire format can prevent it.  Unlinkability at rest is NECESSARY BUT NOT
+SUFFICIENT for anonymity: it only pays off when composed with an anonymising
+transport (a mixnet, onion routing, or a true dead drop).  SCE seals the
+capsule; it does not disguise the courier.  See README "Boundaries" and SPEC
+section 11.2.
+
 The public API deliberately does NOT let callers supply raw AEAD keys or nonces:
 nonces are always generated internally, and keys are always derived internally
 from the master secret.  Versatility is meant to live in *where it plugs in*, not
