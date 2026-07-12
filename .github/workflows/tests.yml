@@ -26,6 +26,15 @@ jobs:
       - name: Run chunked-stream test suite
         run: python tests/test_stream.py
 
+      - name: Run hardening harness (exhaustive mutation, error model, KAT)
+        run: python tests/test_hardening.py
+
+      - name: Run sabotage suite (verifies the tests catch security regressions)
+        run: python tests/test_sabotage.py
+
+      - name: Fuzz (corpus replay + generated inputs, deterministic seed)
+        run: python fuzz/fuzz_envelope.py --runs 50000 --seed 0
+
       - name: Run fail-closed demo
         run: python examples/demo.py
 
