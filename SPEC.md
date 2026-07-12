@@ -25,7 +25,9 @@ The adversary is assumed to:
 
 Against this adversary SCE guarantees (§11): confidentiality and integrity of the state; that an envelope opens under exactly one environment; that failure is uniform and reveals nothing about its cause; and that envelopes are **unlinkable** — two envelopes sealed from identical inputs share no common field.
 
-SCE does **not** provide forward secrecy, does not hide the payload size, and does not authenticate the *holder*. See §11.2.
+**These are properties of the bytes, not of the channel.** SCE is a payload-layer primitive: it has no transport, no mixnet, and no network code, and is meant to sit *underneath* such systems. An adversary that can correlate **network identity** — source IP, TLS session, account credential, connection timing — links a user's envelopes regardless of what those envelopes contain, and no wire format can prevent that. The unlinkability guarantee of §11.1(5) is therefore **necessary but not sufficient** for anonymity; it must be composed with an anonymising transport. See §11.2.
+
+SCE does **not** provide forward secrecy, does not hide the payload size, does not authenticate the *holder*, and does not anonymise the *channel*. See §11.2.
 
 ---
 
@@ -329,11 +331,12 @@ Diagnostic helpers MAY exist for trusted operators, but MUST NOT be reachable fr
 2. **Environment binding, twice, independently.** The environment derives the key (§5) *and* is authenticated data (§6.1). A change to any manifest field, the epoch, or the context changes `K_enc` and the commitment, and the seal fails.
 3. **Key commitment.** The explicit commitment binds the ciphertext to exactly one key. A plain AEAD is *not* key-committing; without this, an adversary who can choose keys could construct a ciphertext that opens validly under two, which is the basis of partitioning-oracle attacks (Albertini et al., USENIX Security 2022; Bellare–Hoang). The commitment is *hiding* (its input half is independent of `K_enc`) and *binding* (a second opening would require a SHA3-256 collision on that half).
 4. **Fail-closed, oracle-free.** One uniform error for every cryptographic failure; both checks always performed (§8.1).
-5. **Unlinkability at rest.** Two envelopes sealed from identical inputs share **no** common field: `nonce`, `salt`, `commitment` and ciphertext all differ, and no environment metadata is present. A holder or relay has nothing to cluster on. This is what permits an untrusted third party to carry the state.
+5. **Unlinkability at rest.** Two envelopes sealed from identical inputs share **no** common field: `nonce`, `salt`, `commitment` and ciphertext all differ, and no environment metadata is present. A holder or relay has nothing **in the envelope** to cluster on. This is a *necessary* condition for an untrusted third party to carry the state — but **not a sufficient** one, because it says nothing about the channel (§11.2).
 6. **Per-seal key separation.** The fresh salt makes `K_enc` unique to every seal, so a repeated nonce is not even a repeated key. GCM-SIV's own nonce-misuse resistance is retained as defence-in-depth behind that.
 
 ### 11.2 Not provided
 
+- **No transport-level anonymity.** The unlinkability of §11.1(5) is a property of the envelope **bytes** only. A relay that observes network identity — source IP, TLS session, account credential, or connection timing — links a user's envelopes regardless, and no change to the wire format can prevent it. To yield real-world anonymity, SCE MUST be composed with an anonymising transport: a mixnet, onion routing, or a genuine dead drop in which sender and recipient never connect directly. *SCE seals the capsule; it does not disguise the courier.* This is the boundary between SCE and the wider Linked Dead-Drop Protocol, and an implementer who ships SCE over an ordinary authenticated HTTPS session to a provider gets **none** of the unlinkability benefit, however clean the envelopes are.
 - **No forward secrecy.** Compromise of the master secret retroactively opens every envelope sealed under it. Mitigation requires an ephemeral key-agreement layer above SCE, which is out of scope for this document.
 - **No size privacy.** The envelope length reveals the payload size (fixed overhead: 85 bytes = 65 header + 4 length + 16 tag). Pad at the transport layer if size correlation matters.
 - **No holder authentication.** SCE authenticates the *environment and secret*, not who is presenting the bytes.
