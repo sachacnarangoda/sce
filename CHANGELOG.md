@@ -5,6 +5,125 @@ versioning; the envelope wire version (e.g. `SCE3`) is bumped whenever the
 on-wire format or the key derivation changes, so envelopes from different
 versions are intentionally incompatible and fail closed rather than mixing.
 
+## [0.4.2] — 2026-07-12
+
+Robustness and verification release. **No wire change, no API change, no change to
+`test_vectors.json`** — SCE4 envelopes sealed by 0.4.x remain readable, and the
+cross-language vectors are byte-identical. This adds an automated security
+verification harness, and fixes the defects that harness found on its first run.
+
+### Fixed
+- **`ModelManifest` is now genuinely immutable.** `@dataclass(frozen=True)` is only
+  *shallowly* immutable: the `extra` dict behind it could still be mutated after
+  construction, which silently changed a live manifest's MEMH — breaking the
+  determinism the whole fingerprint rests on, and making any cached MEMH unsafe.
+  `extra` is now validated, snapshotted (so it cannot alias the caller's dict), and
+  exposed read-only via `MappingProxyType`. The canonical bytes and MEMH of any
+  given manifest are unchanged, so this is wire- and vector-safe.
+  *Behaviour change:* mutating `manifest.extra` now raises instead of silently
+  corrupting the fingerprint. `extra` accepts any `Mapping` on input.
+- **Uniform error model at every public entry point.** 11 of 20 entry-point/argument
+  combinations could leak a raw, non-`SCEError` exception (`TypeError` from an
+  unchecked `sealed`/`container`; `AttributeError` from an unchecked `manifest`),
+  which meant `except SCEError:` was *not* a safe way to call this library and a
+  malicious or malformed input could crash a caller. All public entry points now
+  validate their arguments and raise `SCEError` (`MalformedEnvelope` for a
+  non-bytes envelope, `SCEError` for a non-manifest). `bytes`, `bytearray`, and
+  `memoryview` envelopes are accepted; the common `bytes` path is not copied.
+- **Sharper `master_secret` guidance.** The minimum stays 16 bytes (128 bits of
+  *random* key material is not weak, and a higher floor would reject legitimate
+  128-bit KMS/HSM keys while still admitting a long password). The error now states
+  plainly that length is not entropy: use a CSPRNG or a KMS key, and stretch a
+  password with Argon2id/scrypt first if that is all you have.
+
+- **Manifest pickling / deep-copying restored.** Freezing `extra` into a read-only
+  mapping (above) silently broke `pickle` and `copy.deepcopy`, so a manifest could
+  no longer cross a process boundary (multiprocessing, task queues) — a regression,
+  not a hardening. `ModelManifest.__reduce__` now reconstructs from a plain dict and
+  re-freezes on the way in. This was found while closing the remaining gaps, *not*
+  by the new harness, which tested the security contract but not the object
+  protocol; tests for `pickle`/`deepcopy`/`copy`/`replace` round-trips now exist.
+
+### Added — normative specification
+- **`SPEC.md`.** The complete wire format and algorithms, written so that an
+  independent implementation in any language can be built from that document alone
+  and interoperate byte-for-byte. Covers the threat model, the `SCEMAN1` manifest
+  canonicalisation and MEMH, key derivation and the commitment, the SCE4 envelope
+  and its associated data, seal/unseal (including the requirements that make failure
+  uniform and oracle-free), the SCES stream container, the error model, and an
+  explicit statement of what is *not* provided (no forward secrecy, no size privacy,
+  no holder authentication). `tools/verify_vectors.js` is a working demonstration
+  that the spec is implementable: it is an independent implementation and it
+  reproduces every vector.
+- **§12 of the spec records which requirements are load-bearing**, using the sabotage
+  suite's evidence: for each mechanism, the test that catches its removal. Three
+  requirements have exactly one detector, so an implementer who skips those tests can
+  drop those mechanisms without noticing. That is stated in the spec rather than left
+  as folklore.
+- **The spec is machine-checked against the code.** Its normative constants block is
+  parsed and compared to the implementation on every CI run
+  (`test_spec_constants_match_the_implementation`). A specification that quietly
+  disagrees with the code is worse than no specification.
+
+### Performance
+- **MEMH is computed once per manifest and cached.** This is correct *only* because
+  the manifest is now genuinely immutable — a cached fingerprint on a mutable object
+  would be a correctness bug, not an optimisation. `manifest.memh()` drops from
+  ~6.7 µs to ~0.09 µs; a small `seal_state` is ~30% faster (38.6 µs → 27.1 µs); and
+  the chunked path no longer re-derives the MEMH once per segment (~9% of a
+  1024-segment seal).
+- **`ModelManifest` is now hashable**, by fingerprint. A frozen dataclass holding a
+  mapping is unhashable by default; hashing the MEMH is well-defined now that the
+  manifest cannot change, and lets manifests be used as dict/set keys for
+  per-environment caches. Equal manifests hash equally.
+
+### Added — automated security verification harness (stdlib only, no new dependencies)
+- **`tests/test_hardening.py` (19 tests).** Exhaustive single-bit mutation of every
+  byte of an envelope *and* of a stream container (not a spot check); exhaustive
+  truncation; a wrong-type matrix over every public entry point; seeded byte fuzz
+  and structured mutation fuzz asserting only `SCEError` escapes and no mutant ever
+  opens; a Python-side known-answer test against `test_vectors.json`; immutability
+  and MEMH-stability properties; and a sub-quadratic scaling guard on the chunked
+  layer (an asymptotic ratio test, not a wall-clock budget, so it does not flake on
+  shared runners).
+- **`tests/test_sabotage.py` — "who tests the tests?"** Applies 9 targeted source
+  mutations to `sce/core.py` (disable the commitment check, gut the associated data,
+  pin the nonce, pin the salt, drop the epoch from the KDF info, drop domain
+  separation, remove length-prefixing, remove manifest key sorting, downgrade the
+  constant-time compare), loads each mutant in isolation, and asserts the canaries
+  catch it. Includes an unmutated **control** run, so the suite cannot pass
+  vacuously. Every functionally detectable sabotage is caught. The constant-time
+  downgrade is *not* functionally detectable — identical behaviour, timing-only — so
+  it is documented as an expected survivor and guarded statically instead.
+- **`fuzz/fuzz_envelope.py` + `fuzz/corpus.json`.** A libFuzzer-shaped
+  `TestOneInput(data)` entry point with a dependency-free driver and a hex-encoded
+  regression corpus that is replayed on every run. Adopting Atheris/OSS-Fuzz later
+  needs a five-line driver, not a rewrite. (OSS-Fuzz itself only accepts established,
+  widely-depended-on projects, so the CI job plus the corpus is the practical
+  equivalent until SCE qualifies.)
+- **Three of the new tests are load-bearing, not decorative** — the sabotage suite
+  proves it. `disable_commitment_check` is caught *only* by the new
+  commitment-isolation test (an envelope with a valid AEAD but a wrong stored
+  commitment); `gut_the_associated_data` *only* by the new AAD-isolation test (a
+  correct key and commitment, but an AAD built from a foreign MEMH); and three KDF
+  sabotages *only* by the new Python-side KAT. Without them, those mechanisms were
+  redundant under test and a refactor could have silently dropped them with CI green.
+- CI now runs the hardening harness, the sabotage suite, and a 50k-input fuzz round
+  (deterministic seed) on every push.
+
+### Not changed, deliberately
+- No `max_*` input-bound configuration knobs were added. The untrusted party controls
+  the envelope bytes, and those are already length-checked, so there is no
+  amplification to bound; `context`/`manifest` come from the *calling* provider, not
+  the holder. Adding knobs would enlarge the misconfiguration surface the design
+  explicitly tries to avoid, and any default generous enough not to break the chunked
+  large-state path would protect nobody by default.
+- `core.py` was not split into serialization/KDF/crypto/envelope modules. A single
+  auditable file of this size is easier to review in one pass than four, and
+  fragmenting working cryptographic code carries more risk than the maintainability
+  it would buy at this scale. Worth revisiting if the module grows substantially or
+  ahead of a formal audit.
+
 ## [0.4.1] — 2026-07-11
 
 ### Added — chunked stream container (SCES v1), no envelope wire change
