@@ -52,6 +52,8 @@ from .core import (
     SCEError,
     StateSealMismatch,
     MalformedEnvelope,
+    _require_manifest,
+    _require_envelope_bytes,
 )
 
 __all__ = [
@@ -125,6 +127,7 @@ def seal_state_chunked(
     be shorter). It must be a positive int within a single envelope's capacity
     (`seal_state` enforces the ~4 GiB per-envelope frame). The default is 64 MiB.
     """
+    _require_manifest(manifest)
     if not isinstance(state, (bytes, bytearray)):
         raise SCEError("state must be bytes; serialise your tensors/objects first")
     if not isinstance(context, (bytes, bytearray)):
@@ -163,6 +166,7 @@ def seal_state_chunked(
 def _parse_stream_header(container: bytes):
     """Structural parse of the container header only. Raises MalformedEnvelope on
     any structural fault. Returns (stream_id, num_segments, segment_size, total_len)."""
+    container = _require_envelope_bytes(container, "stream container")
     if len(container) < _STREAM_HEADER.size:
         raise MalformedEnvelope("blob is shorter than the SCES stream header")
     magic, version, stream_id, n, seg_size, total_len = _STREAM_HEADER.unpack(
@@ -197,10 +201,12 @@ def unseal_state_chunked(
     header), and no plaintext or key material is revealed. Each segment still fails
     with the envelope's own uniform, oracle-free error.
     """
+    _require_manifest(manifest)
     if not isinstance(context, (bytes, bytearray)):
         raise SCEError("context must be bytes")
     user_context = bytes(context)
 
+    container = _require_envelope_bytes(container, "stream container")
     stream_id, n, seg_size, total_len = _parse_stream_header(container)
 
     # Guard against an absurd declared segment count forcing a long loop: each
