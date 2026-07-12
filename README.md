@@ -3,7 +3,9 @@
 
 **A small cryptographic primitive that makes portable AI inference state fail *closed* when the model changes underneath it — instead of resuming into silent, undetectable corruption.**
 
-Status: **reference / proof-of-concept (v4).** Correct and tested (38 core tests plus a 20-test chunked-stream suite, including adversarial cases, a manifest-theft/brute-force simulation, unlinkability regressions, structural-tamper tests on chunked streams, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
+Status: **reference / proof-of-concept (v4).** Correct and tested (**77 tests**: a 38-test envelope suite, a 20-test chunked-stream suite, and a 19-test hardening harness, plus a sabotage suite that verifies the tests actually catch security regressions and a fuzz target with a replayed regression corpus — covering adversarial cases, a manifest-theft/brute-force simulation, unlinkability regressions, exhaustive single-bit mutation of every envelope and container byte, and a 1,500-trial randomised property test), built on standard cryptography: **AES-256-GCM-SIV** (RFC 8452), HKDF-SHA3-256, SHA3-256. Not yet independently audited and not yet wired into a production inference engine. See [Boundaries](#boundaries). "Infallible" is not claimed and is not achievable; the achievable, intended property is **no silent, catastrophic failure mode**.
+
+**[`SPEC.md`](SPEC.md)** is the normative wire-format and algorithm specification: an independent implementation written from that document alone must interoperate byte-for-byte and reproduce the test vectors. `tools/verify_vectors.js` is exactly that — an independent JavaScript implementation — and it does.
 
 > **v4 wire change.** The envelope no longer carries the environment fingerprint (MEMH), the epoch, or a deterministic commitment in cleartext — so a party merely *holding* an envelope can no longer link or cluster a user's sessions by a stable tag. Those fields are re-derived on unseal and bound through the key and the AEAD associated data instead. v4 envelopes and older (SCE3) envelopes deliberately refuse to open under each other. See [How it works](#how-it-works).
 
@@ -70,6 +72,9 @@ pip install "cryptography>=43" numpy     # AES-GCM-SIV needs cryptography >= 43 
 
 python tests/test_core.py                # envelope suite: 38 tests, incl. adversarial + fuzz
 python tests/test_stream.py              # chunked-stream suite: 20 tests, incl. structural tamper
+python tests/test_hardening.py           # hardening harness: 19 tests, exhaustive mutation + KAT
+python tests/test_sabotage.py            # "who tests the tests?" -- 9 sabotages must be caught
+python fuzz/fuzz_envelope.py             # corpus replay + generated inputs (stdlib driver)
 python examples/demo.py                  # narrated walkthrough of the fail-closed behaviour
 ```
 
@@ -120,6 +125,17 @@ Each segment is a normal SCE4 envelope; the sequence is bound via the `context` 
 ## Test vectors
 
 `test_vectors.json` contains deterministic known-answer values — the canonical manifest bytes, the MEMH, and (for a fixed master secret and a **fixed per-seal salt**) the derived `K_enc` and key commitment — so an independent implementation in another language can verify canonicalisation, MEMH, key derivation, and commitment. The salt is normally random per seal; it is pinned per case here purely so the derived values are reproducible. Nonce and ciphertext are randomised per seal and are therefore not part of the KAT. An independent JavaScript reimplementation (`tools/verify_vectors.js`) reproduces every value, which is the interoperability check.
+
+## Verification
+
+Beyond the behavioural suites, SCE carries an automated security-verification layer that attacks its own implementation. It needs no dependencies beyond the library itself, and runs in CI on every push.
+
+- **Exhaustive mutation, not sampling.** Every bit of every byte of an envelope — and of a chunked stream container — is flipped, one at a time, and must fail closed. Every truncation and extension likewise.
+- **A single, uniform error model.** For arbitrary bytes into any public entry point, only `SCEError` may escape. If a raw `TypeError` could get out, `except SCEError:` would not be a safe way to call this library and a malformed envelope could crash a caller — so that is asserted, not assumed.
+- **Known-answer vectors, checked from Python too.** A silent change to canonicalisation or key derivation would still round-trip (both sides change together) and would previously have been caught only by the JavaScript verifier. Now the Python suite catches it as well.
+- **"Who tests the tests?"** `tests/test_sabotage.py` deliberately breaks nine security mechanisms in `core.py` — disabling the key-commitment check, gutting the associated data, pinning the nonce or salt, dropping domain separation, and so on — and asserts the suite catches each one. It runs an unmutated control first, so it cannot pass vacuously. One mutation (downgrading the constant-time compare to `==`) is *not* functionally detectable, because the behaviour is identical and only the timing changes; it is documented as an expected survivor and guarded at the source level instead. This is how the suite's teeth are kept honest rather than assumed.
+- **The spec cannot silently drift.** `SPEC.md` carries a normative constants block that is parsed and checked against the implementation on every CI run. A specification that quietly disagrees with the code is worse than none — it hands a third-party implementer false confidence and guarantees an interop failure.
+- **Fuzzing with a regression corpus.** `fuzz/fuzz_envelope.py` exposes a libFuzzer-shaped `TestOneInput(data)` entry point with a dependency-free driver; `fuzz/corpus.json` holds hex-encoded regression seeds replayed on every run, so a fixed bug cannot quietly return. Adopting a coverage-guided engine (Atheris) later is a five-line driver, not a rewrite.
 
 ## Boundaries
 
