@@ -16,7 +16,7 @@ authors:
 license: Apache-2.0
 repository-code: "https://github.com/sachacnarangoda/sce"
 url: "https://github.com/sachacnarangoda/sce"
-version: "0.4.2"
+version: "0.4.3"
 date-released: "2026-07-12"
 keywords:
   - cryptography
