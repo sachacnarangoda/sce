@@ -5,6 +5,38 @@ versioning; the envelope wire version (e.g. `SCE3`) is bumped whenever the
 on-wire format or the key derivation changes, so envelopes from different
 versions are intentionally incompatible and fail closed rather than mixing.
 
+## [0.4.3] — 2026-07-12
+
+Documentation only. No code behaviour change, no wire change, no API change, no
+change to `test_vectors.json`. **It corrects an over-stated security claim**, which
+is why it is recorded as a release rather than an untagged commit.
+
+### Fixed — an over-claimed security property
+- **Unlinkability is a property of the bytes, not of the channel.** v4 made a
+  breaking wire change to strip every linkable field from the envelope, and the
+  documentation then implied — in `SPEC.md` §11.1 most explicitly ("this is what
+  permits an untrusted third party to carry the state") — that this was sufficient
+  for an untrusted relay to carry state without linking a user's sessions. **It is
+  not.** A relay that observes network identity (source IP, TLS session, account
+  credential, connection timing) links a user's envelopes regardless of how clean
+  the envelope bytes are, and no wire format can prevent that. Unlinkability at rest
+  is **necessary but not sufficient**: it only yields real-world anonymity when
+  composed with an anonymising transport — a mixnet, onion routing, or a genuine
+  dead drop in which sender and recipient never connect directly. That layer is what
+  LDDP is for, and it is not in this repository.
+- The correction is stated in three places a reader can actually reach it:
+  `SPEC.md` §1 (threat model — the guarantees are properties of the bytes, not the
+  channel), §11.1(5) (the claim is now marked necessary-but-not-sufficient), and a
+  new leading bullet in §11.2 (*Not provided*); the README **Boundaries** section,
+  as its first entry; and the `sce/core.py` module docstring, so a developer reading
+  the source hits it too.
+- Concretely: shipping SCE over an ordinary logged-in HTTPS session to a provider
+  yields **none** of the unlinkability benefit. Anyone relying on that property
+  needed to be told so plainly.
+
+### Added — README framing
+- An opening metaphor, so the design is legible in thirty seconds.
+
 ## [0.4.2] — 2026-07-12
 
 Robustness and verification release. **No wire change, no API change, no change to
