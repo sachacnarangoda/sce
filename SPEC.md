@@ -2,7 +2,7 @@
 
 **Wire version:** SCE4 (envelope) · SCES v1 (chunked container)
 **Status:** stable for the 0.4.x series · reference implementation, not independently audited
-**Document version:** 1.0 (2026-07-12)
+**Document version:** 1.1 (2026-07-13)
 
 This document specifies the SCE wire format and algorithms **normatively and completely**: an independent implementation written from this document alone, in any language, must interoperate byte-for-byte with the reference implementation and reproduce `test_vectors.json`.
 
@@ -372,7 +372,7 @@ Implementers SHOULD port these checks. Three of them are the *sole* detector of 
 
 The salt is random per seal in normal operation; it is pinned per case so the derived values are reproducible. `nonce` and `ciphertext` are randomised per seal and are therefore **not** part of the known-answer set.
 
-A conforming implementation MUST reproduce every value in `test_vectors.json`. `tools/verify_vectors.js` is an independent JavaScript implementation that does so, and is the interoperability check for this specification.
+A conforming implementation MUST reproduce every value in `test_vectors.json`. `tools/verify_vectors.js` is a second JavaScript implementation that does so, sharing no code with the reference, and is the interoperability check for this specification. It is a check on *encoding and transcription*, not a substitute for independent review: it was written by the same author as the reference and therefore does not detect a conceptual error common to both. An implementation written by a third party from this document alone is the verification this specification is designed to make possible, and it has not yet been performed.
 
 ---
 
