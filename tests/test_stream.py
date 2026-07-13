@@ -334,6 +334,22 @@ def test_genuine_empty_state_still_round_trips():
     assert unseal_state_chunked(c, base_manifest(), master_secret=MASTER) == b""
 
 
+def test_oversize_segment_size_raises_sceerror_not_struct_error():
+    """Regression: segment_size at or above 2**64 (or above the max sealable
+    payload) is packed into a u64 header field and previously escaped as a raw
+    struct.error, violating the 'only SCEError escapes a public entry point'
+    contract asserted in the README and SPEC 10. It must now raise SCEError."""
+    import struct
+    for ss in (1 << 64, 1 << 70, (1 << 32)):   # >= 2**64, huge, and > _MAX_STATE
+        try:
+            seal_state_chunked(b"hello", base_manifest(), master_secret=MASTER, segment_size=ss)
+        except SCEError:
+            continue
+        except struct.error as e:
+            raise AssertionError(f"segment_size={ss} leaked raw struct.error: {e}")
+        raise AssertionError(f"segment_size={ss} was accepted")
+
+
 def test_oversize_context_raises_sceerror_not_overflow():
     """Regression: an oversized length-prefixed field must raise SCEError, not a
     raw OverflowError, upholding the 'only SCEError escapes' contract. We assert
