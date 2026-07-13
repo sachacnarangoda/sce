@@ -19,7 +19,7 @@ from .stream import (
     DEFAULT_SEGMENT_SIZE,
 )
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 
 __all__ = [
     "ModelManifest",
