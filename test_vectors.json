@@ -8,7 +8,7 @@
   "manifest_canonical_format": "SCEMAN1: tag, then each core field as uint32-BE length + NFC-UTF8 bytes (fixed order), then uint32-BE count of extra items, then each sorted key/value length-prefixed",
   "kdf_info": "info = 'LDDP-SCE|kdf-v4|' || SHA3-256('LDDP-SCE|kdf-canon-v4' || LP(context) || LP(epoch_be) || LP(MEMH)); LP(x)=uint32-BE(len)||x",
   "commitment": "SHA3-256(DOMAIN|'|commit|'|HKDF_material[32:64]); material = HKDF-SHA3-256(master, salt=salt (per-seal, from header), info=<above>, len=64)",
-  "note": "v4 carries no MEMH/epoch in cleartext; MEMH+epoch are re-derived on unseal and bound via the AEAD associated data. 'salt' is the per-seal HKDF-extract salt (fixed here per case for determinism); nonce and ciphertext are randomised per seal and are NOT part of the KAT.",
+  "note": "Each case now also pins the nonce and publishes the exact AAD and full envelope for a fixed plaintext, so the AEAD/AAD is a known answer -- a third-party implementation cannot mis-build the AAD yet pass the vectors. Node lacks AES-256-GCM-SIV, so the bundled JS verifier checks the AAD bytes (not the ciphertext); an implementation in a language with GCM-SIV can check envelope_hex end-to-end.",
   "cases": [
     {
       "manifest": {
@@ -26,7 +26,11 @@
       "context_utf8": "",
       "salt_hex": "00000000000000000000000000000000",
       "k_enc_hex": "832fbf5a1081e9e10da372cdcfb7a103734e77bf40a2a0a6e0c8e1b0c06618c1",
-      "key_commitment_hex": "6e5d798ca8d7ff567bd2b03bc4a25e8ccb20da19b7c4a3c5259b0fa745532a0b"
+      "key_commitment_hex": "6e5d798ca8d7ff567bd2b03bc4a25e8ccb20da19b7c4a3c5259b0fa745532a0b",
+      "nonce_hex": "404040404040404040404040",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c5343453404404040404040404040404040000000000000000000000000000000006e5d798ca8d7ff567bd2b03bc4a25e8ccb20da19b7c4a3c5259b0fa745532a0b148cc03585015f7e58365ccbffc8ccab72a5d816385c417b4419be3eb4b713b60000000000000000",
+      "envelope_hex": "5343453404404040404040404040404040000000000000000000000000000000006e5d798ca8d7ff567bd2b03bc4a25e8ccb20da19b7c4a3c5259b0fa745532a0b0000002a6fae45a7932362e84050510580753e888a0f7db23328be72babfeb1da3837d868791d60d6390b5043ca8"
     },
     {
       "manifest": {
@@ -44,7 +48,11 @@
       "context_utf8": "tenant-A",
       "salt_hex": "01010101010101010101010101010101",
       "k_enc_hex": "526b6d443fbb838469e378acc3343a080662b9f9324ed33f6fec8f8ab0e48906",
-      "key_commitment_hex": "577351efa9f924c2616d7b55fce02a2a8593f986071498355edf70a24ae482de"
+      "key_commitment_hex": "577351efa9f924c2616d7b55fce02a2a8593f986071498355edf70a24ae482de",
+      "nonce_hex": "414141414141414141414141",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c534345340441414141414141414141414101010101010101010101010101010101577351efa9f924c2616d7b55fce02a2a8593f986071498355edf70a24ae482de148cc03585015f7e58365ccbffc8ccab72a5d816385c417b4419be3eb4b713b60000000000000000",
+      "envelope_hex": "534345340441414141414141414141414101010101010101010101010101010101577351efa9f924c2616d7b55fce02a2a8593f986071498355edf70a24ae482de0000002a6aa3beb9e7349871b767d6c387d910bf9fc4bb6a1e2aecd50309ebe7a8ba2f00403d351f517a03f2d388"
     },
     {
       "manifest": {
@@ -62,7 +70,11 @@
       "context_utf8": "",
       "salt_hex": "02020202020202020202020202020202",
       "k_enc_hex": "6f0505bfa7f722c35f352bd2870599b28f98ef284e26e251e3300ee9bca692d5",
-      "key_commitment_hex": "ef911c0ac914c1e875325285a554398aef909aa89fdb4872b971fb3a43bd03e2"
+      "key_commitment_hex": "ef911c0ac914c1e875325285a554398aef909aa89fdb4872b971fb3a43bd03e2",
+      "nonce_hex": "424242424242424242424242",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c534345340442424242424242424242424202020202020202020202020202020202ef911c0ac914c1e875325285a554398aef909aa89fdb4872b971fb3a43bd03e21b7104c56a5c94e1f4e3135929c30344891e6f4e6766361b2b533b934f955deb0000000000000000",
+      "envelope_hex": "534345340442424242424242424242424202020202020202020202020202020202ef911c0ac914c1e875325285a554398aef909aa89fdb4872b971fb3a43bd03e20000002a6a9761f5a7bac9ad9a963068eedf9e22909e50f121f041ec123c51d398f9aa41feba659986d457b62ff7"
     },
     {
       "manifest": {
@@ -80,7 +92,11 @@
       "context_utf8": "tenant-A",
       "salt_hex": "03030303030303030303030303030303",
       "k_enc_hex": "3ba6b8767ddf37d279f6707543ea7cd9a80848383be5511f6bd4e5577d6130b6",
-      "key_commitment_hex": "37245374b3463958858b3edf2da126dee61f8109ea0b316a07476bc5019ab584"
+      "key_commitment_hex": "37245374b3463958858b3edf2da126dee61f8109ea0b316a07476bc5019ab584",
+      "nonce_hex": "434343434343434343434343",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c53434534044343434343434343434343430303030303030303030303030303030337245374b3463958858b3edf2da126dee61f8109ea0b316a07476bc5019ab5841b7104c56a5c94e1f4e3135929c30344891e6f4e6766361b2b533b934f955deb0000000000000000",
+      "envelope_hex": "53434534044343434343434343434343430303030303030303030303030303030337245374b3463958858b3edf2da126dee61f8109ea0b316a07476bc5019ab5840000002a332f1ad0f5dca2ff49b15e56f58cb1b5263dbcdb403dbf7f580d6d0d84f8f72ffcd27e4fb2125b6917f0"
     },
     {
       "manifest": {
@@ -100,7 +116,11 @@
       "context_utf8": "",
       "salt_hex": "04040404040404040404040404040404",
       "k_enc_hex": "e46e6e47ca5fd9484b877dade507be82fbe6900fd8e36c059535da0f23e5fd07",
-      "key_commitment_hex": "9592bb1ec0a79bee492d811a518035ae7747d9cae841a43fe3e7e3c18d33e5b6"
+      "key_commitment_hex": "9592bb1ec0a79bee492d811a518035ae7747d9cae841a43fe3e7e3c18d33e5b6",
+      "nonce_hex": "444444444444444444444444",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c5343453404444444444444444444444444040404040404040404040404040404049592bb1ec0a79bee492d811a518035ae7747d9cae841a43fe3e7e3c18d33e5b6993dc6d40b269aa6105311266cc8ef07284292db8bb6b3e920616592a08353d40000000000000000",
+      "envelope_hex": "5343453404444444444444444444444444040404040404040404040404040404049592bb1ec0a79bee492d811a518035ae7747d9cae841a43fe3e7e3c18d33e5b60000002a1dbd83028bd8930aee2a428f98badeb807221301c2a3a458f82630abe8fb64c8f449ab7fa41bd085c5b1"
     },
     {
       "manifest": {
@@ -120,7 +140,38 @@
       "context_utf8": "tenant-A",
       "salt_hex": "05050505050505050505050505050505",
       "k_enc_hex": "f6211d828a14608147a1737cdfaab2ffb175e4513e07c67255f5dc58d3cbea94",
-      "key_commitment_hex": "4cbc90b396e2c09859a913a791a4a547b50456f3c4114b8582f79f4aa0f6869f"
+      "key_commitment_hex": "4cbc90b396e2c09859a913a791a4a547b50456f3c4114b8582f79f4aa0f6869f",
+      "nonce_hex": "454545454545454545454545",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c5343453404454545454545454545454545050505050505050505050505050505054cbc90b396e2c09859a913a791a4a547b50456f3c4114b8582f79f4aa0f6869f993dc6d40b269aa6105311266cc8ef07284292db8bb6b3e920616592a08353d40000000000000000",
+      "envelope_hex": "5343453404454545454545454545454545050505050505050505050505050505054cbc90b396e2c09859a913a791a4a547b50456f3c4114b8582f79f4aa0f6869f0000002ae088af7ca514c702e6a53d1a27c77a8b71d0f48e5274a47f5e46a1355e289f1a5a95e06205247d362db5"
+    },
+    {
+      "manifest": {
+        "weights_hash": "sha3:café-model",
+        "quantization": "bf16",
+        "kernel_build_id": "vllm-über",
+        "tensor_parallel": "tp=1,pp=1",
+        "numerics_mode": "bf16",
+        "extra": {
+          "αregion": "eu",
+          "adapter": "lora-é"
+        }
+      },
+      "canonical_manifest_hex": "5343454d414e3100000010736861333a636166c3a92d6d6f64656c00000004626631360000000a766c6c6d2dc3bc6265720000000974703d312c70703d310000000462663136000000020000000761646170746572000000076c6f72612dc3a900000008ceb1726567696f6e000000026575",
+      "memh_sha3_256_hex": "b25e3e90c61fd532661192ab30d43cb1a7a08e30189e3c592adc74ffb0116368",
+      "master_secret_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "epoch_id": 0,
+      "context_utf8": "ctx-é",
+      "salt_hex": "55555555555555555555555555555555",
+      "k_enc_hex": "0248c4bc918e25a0489bed1429652d183fc8c084da31ca059164874daff8f01a",
+      "key_commitment_hex": "eab86ae26d699764d582dbdbb929742657ab0c9a5d622eec22291144f4e9b4c4",
+      "nonce_hex": "464646464646464646464646",
+      "plaintext_utf8": "SCE known-answer plaintext",
+      "aad_hex": "4c4444502d5343452d76347c6864727c534345340446464646464646464646464655555555555555555555555555555555eab86ae26d699764d582dbdbb929742657ab0c9a5d622eec22291144f4e9b4c4b25e3e90c61fd532661192ab30d43cb1a7a08e30189e3c592adc74ffb01163680000000000000000",
+      "envelope_hex": "534345340446464646464646464646464655555555555555555555555555555555eab86ae26d699764d582dbdbb929742657ab0c9a5d622eec22291144f4e9b4c40000002a136dce2e76d495b90533323e184b2b2b4eed3be777acacf8b25966899242a29a0b1dfd818940c0167e6e",
+      "_comment": "Exercises NFC normalisation (decomposed non-ASCII) and multi-key extra sort; locks both to Unicode 15.0.0."
     }
-  ]
+  ],
+  "normative_unicode_version": "15.0.0"
 }
