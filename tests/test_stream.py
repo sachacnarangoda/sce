@@ -299,6 +299,60 @@ def test_bad_segment_size_rejected():
 
 
 # ===================== runner ======================================= #
+def test_forged_zero_segment_container_is_rejected():
+    """Regression: a header-only container claiming n=0, built with NO secret,
+    must NOT be accepted. Before the fix it returned b"" after performing zero
+    cryptographic verification -- an unauthenticated forgery of the fail-closed
+    contract (and a violation of SPEC 9.2)."""
+    forged = stream._STREAM_HEADER.pack(
+        stream._STREAM_MAGIC, stream._STREAM_VERSION, b"\x00" * 16, 0, 0, 0)
+    for secret in (b"\x00" * 32, b"\x99" * 32, MASTER):
+        try:
+            unseal_state_chunked(forged, base_manifest(), master_secret=secret)
+        except MalformedEnvelope:
+            continue
+        raise AssertionError("SECURITY FAILURE: zero-segment container accepted")
+
+
+def test_forged_empty_container_with_wrong_n_is_rejected():
+    """An empty state (L=0) must be carried by exactly one segment. A container
+    claiming L=0 with n != 1 is structurally invalid and must be refused."""
+    for n in (0, 2, 5):
+        forged = stream._STREAM_HEADER.pack(
+            stream._STREAM_MAGIC, stream._STREAM_VERSION, b"\x00" * 16, n, 0, 0)
+        try:
+            unseal_state_chunked(forged, base_manifest(), master_secret=MASTER)
+        except MalformedEnvelope:
+            continue
+        raise AssertionError(f"empty container with n={n} accepted")
+
+
+def test_genuine_empty_state_still_round_trips():
+    """The fix must not break the legitimate empty-state case: a properly sealed
+    empty state (which the producer carries as exactly one segment) still opens."""
+    c = seal_state_chunked(b"", base_manifest(), master_secret=MASTER, segment_size=1000)
+    assert unseal_state_chunked(c, base_manifest(), master_secret=MASTER) == b""
+
+
+def test_oversize_context_raises_sceerror_not_overflow():
+    """Regression: an oversized length-prefixed field must raise SCEError, not a
+    raw OverflowError, upholding the 'only SCEError escapes' contract. We assert
+    the guard directly against the length-prefix helper (allocating 4 GiB is not
+    feasible in a test)."""
+    import sce.core as core
+
+    class _HugeLen(bytes):
+        def __len__(self):  # pretend to be > 2**32 bytes without allocating
+            return (1 << 32) + 1
+
+    try:
+        core._lp(_HugeLen())
+    except SCEError:
+        pass
+    else:
+        raise AssertionError("oversize length-prefixed field did not raise SCEError")
+
+
 def main():
     tests = [obj for name, obj in sorted(globals().items())
              if name.startswith("test_") and callable(obj)]
