@@ -40,7 +40,7 @@ SCE does **not** provide forward secrecy, does not hide the payload size, does n
 | `u64(n)` | `n` as an 8-byte unsigned big-endian integer |
 | `LP(b)` | length-prefixed bytes: `u32(len(b)) ‖ b` |
 | `SHA3(b)` | SHA3-256 of `b` (32 bytes) |
-| `NFC(s)` | Unicode Normalization Form C of string `s` |
+| `NFC(s)` | Unicode Normalization Form C of string `s`, computed under the **normative Unicode version** (§2.1) |
 | `UTF8(s)` | UTF-8 encoding of `s` |
 | `random(n)` | `n` bytes from a cryptographically secure RNG |
 
@@ -56,6 +56,8 @@ All integers on the wire are **unsigned big-endian**. All lengths are in bytes.
 | Constant-time compare | any equal-time byte comparison |
 
 Implementations MUST use exactly these primitives. AES-256-GCM-SIV is chosen for nonce-misuse resistance: it degrades gracefully rather than catastrophically if an RNG ever repeats a `(salt, nonce)` pair.
+
+**Normative Unicode version.** `NFC` (used in manifest canonicalisation, §4) is defined relative to a specific version of the Unicode Character Database, because the canonical decomposition of some codepoints has changed between Unicode versions. The normative version for this specification is **Unicode 15.0.0**; a conforming implementation MUST compute `NFC` under Unicode 15.0.0 (or a later version that does not alter the normalisation of any codepoint the implementation admits). Two implementations that normalise under *different* Unicode versions may compute different MEMH for a manifest containing an affected codepoint, and would then fail to interoperate — the failure is **fail-closed** (a spurious refusal to resume, never a false accept), but it is still an interoperability defect. Since real manifests are dominated by ASCII and common Latin, whose NFC is stable across all Unicode versions, implementations SHOULD restrict manifest strings to codepoints that are stable under NFC where practical; the normative version pins the remainder.
 
 ---
 
@@ -372,11 +374,13 @@ Implementers SHOULD port these checks. Three of them are the *sole* detector of 
 
 ## 13. Test vectors
 
-`test_vectors.json` contains six known-answer cases. Each gives a manifest and the expected `canonical(M)`, `MEMH`, and — for a fixed `master_secret`, `epoch_id`, `context` and a **pinned** `salt` — the derived `K_enc` and `commitment`.
+`test_vectors.json` contains seven known-answer cases. Each gives a manifest and the expected `canonical(M)`, `MEMH`, and — for a fixed `master_secret`, `epoch_id`, `context` and a **pinned** `salt` — the derived `K_enc` and `commitment`. To make the AEAD path a known answer as well, each case **also pins the `nonce`** and publishes, for a fixed `plaintext`, the exact associated data (`aad_hex`) and the full sealed envelope (`envelope_hex`). The salt and nonce are random per seal in normal operation; they are pinned per case only so the derived values and the ciphertext are reproducible.
 
-The salt is random per seal in normal operation; it is pinned per case so the derived values are reproducible. `nonce` and `ciphertext` are randomised per seal and are therefore **not** part of the known-answer set.
+Pinning the AAD and the whole envelope closes a real interoperability gap: because the associated data affects only the ciphertext/tag, an implementation that mis-built the AAD (wrong domain label, `MEMH`/epoch transposed, a dropped separator, header bytes in the wrong order) could otherwise reproduce every derived-key value, be internally self-consistent, and still emit envelopes the reference cannot open. With the AAD and envelope pinned, such an implementation fails the vectors.
 
-A conforming implementation MUST reproduce every value in `test_vectors.json`. `tools/verify_vectors.js` is a second JavaScript implementation that does so, sharing no code with the reference, and is the interoperability check for this specification. It is a check on *encoding and transcription*, not a substitute for independent review: it was written by the same author as the reference and therefore does not detect a conceptual error common to both. An implementation written by a third party from this document alone is the verification this specification is designed to make possible, and it has not yet been performed.
+Case 7 uses non-ASCII manifest fields (a decomposed `NFC` input and a two-key `extra` that requires sorting), so the vectors lock down `NFC` normalisation and key ordering — not only ASCII — to the normative Unicode version (§2.1).
+
+A conforming implementation MUST reproduce every value in `test_vectors.json`. `tools/verify_vectors.js` is a second JavaScript implementation that does so, sharing no code with the reference, and is the interoperability check for this specification. Node does not expose AES-256-GCM-SIV, so the bundled JS verifier reproduces the canonicalisation, `MEMH`, key material, `commitment`, and the **associated-data** bytes, but not the ciphertext; an implementation in a language with GCM-SIV can and should check `envelope_hex` end-to-end. This remains a check on *encoding and transcription*, not a substitute for independent review: it was written by the same author as the reference and therefore does not detect a conceptual error common to both. An implementation written by a third party from this document alone is the verification this specification is designed to make possible, and it has not yet been performed.
 
 ---
 
