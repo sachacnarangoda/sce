@@ -52,6 +52,7 @@ from .core import (
     SCEError,
     StateSealMismatch,
     MalformedEnvelope,
+    _MAX_STATE,
     _require_manifest,
     _require_envelope_bytes,
 )
@@ -134,6 +135,12 @@ def seal_state_chunked(
         raise SCEError("context must be bytes")
     if not isinstance(segment_size, int) or isinstance(segment_size, bool) or segment_size <= 0:
         raise SCEError("segment_size must be a positive integer")
+    if segment_size > _MAX_STATE:
+        # segment_size is packed into a u64 header field, and a single segment can
+        # never exceed one envelope's payload capacity anyway. Bounding it here
+        # keeps the "only SCEError escapes" contract instead of letting an oversize
+        # value surface as a raw struct.error from the header pack.
+        raise SCEError("segment_size exceeds the maximum sealable payload (~4 GiB)")
 
     state = bytes(state)
     user_context = bytes(context)
