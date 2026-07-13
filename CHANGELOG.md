@@ -5,10 +5,51 @@ versioning; the envelope wire version (e.g. `SCE3`) is bumped whenever the
 on-wire format or the key derivation changes, so envelopes from different
 versions are intentionally incompatible and fail closed rather than mixing.
 
-## [0.4.4] — 2026-07-13
+## [0.4.5] — 2026-07-13
 
-A security fix plus an error-model fix and documentation precisions were identified. 
-**No wire change and no key-derivation change** —
+A conformance fix and two interoperability/precision improvements. 
+**No wire change and no key-derivation change** — the
+magic stays `SCE4` and every existing derived value in `test_vectors.json` is
+byte-identical; the vectors only *gain* pinned fields. Patch release.
+
+### Fixed — uniform-error-model violation (distinct from the 0.4.4 fix)
+- **`segment_size` above the u64 range now raises `SCEError`, not a raw
+  `struct.error`.** A `segment_size >= 2**64` (or above the maximum sealable
+  payload) was packed into the SCES header's u64 field and escaped as a bare
+  `struct.error`, violating the "only `SCEError` escapes a public entry point"
+  contract asserted in the README and SPEC §10. This is a *different* chokepoint
+  from the length-prefix `OverflowError` sites fixed in 0.4.4 — it is the header
+  `struct.pack`. Producer-side and caller-controlled (no false-accept or leak),
+  but it falsified a stated invariant. Bounded with `SCEError` and covered by a
+  regression test. (`sce/stream.py`, `tests/test_stream.py`.)
+
+### Improved — the test vectors now pin the AEAD/AAD (closes an interop gap)
+- **The AAD and the full envelope are now known answers.** Previously the six
+  vectors stopped at `K_enc` and `commitment`; the associated data affects only
+  the ciphertext/tag, so an implementation that mis-built the AAD (wrong domain
+  label, `MEMH`/epoch transposed, dropped separator, wrong header order) could
+  reproduce every vector, be internally self-consistent, and still emit envelopes
+  the reference cannot open. Each case now also **pins the nonce** and publishes
+  `aad_hex` and `envelope_hex` for a fixed plaintext. The Python known-answer
+  test verifies the AAD and the whole envelope end-to-end; the JS verifier (Node
+  has no AES-256-GCM-SIV) reproduces the **AAD bytes** cross-language, which is
+  the component that was unpinned. (`test_vectors.json`, `tools/verify_vectors.js`,
+  `tests/test_hardening.py`, `SPEC.md` §13.)
+
+### Fixed — NFC normalisation was version-dependent and unpinned
+- **A normative Unicode version is now named (Unicode 15.0.0).** `NFC` depends on
+  the Unicode Character Database version, and two implementations bundling
+  different versions could compute different `MEMH` for a manifest containing an
+  affected codepoint — a **fail-closed** interop defect (a spurious refusal, never
+  a false accept), but a real one, and every prior KAT was ASCII so it was never
+  exercised. `SPEC.md` §2.1 now pins Unicode 15.0.0 as normative, and a seventh
+  KAT case uses a decomposed non-ASCII string and a two-key `extra`, locking both
+  normalisation and key-ordering to a known answer. (`SPEC.md`, `test_vectors.json`.)
+
+
+
+A security fix plus an error-model fix and documentation precisions surfaced by
+two independent cold reviews. **No wire change and no key-derivation change** —
 the magic stays `SCE4`, `test_vectors.json` is unchanged, and the cross-language
 verifier still reproduces every vector byte-for-byte, so every legitimately
 sealed envelope and container round-trips exactly as before. This is therefore a
