@@ -99,6 +99,22 @@ function main() {
     checks.push(['K_enc', kEnc.toString('hex') === c.k_enc_hex]);
     checks.push(['commitment', commitment.toString('hex') === c.key_commitment_hex]);
 
+    // AAD known answer. Node has no AES-256-GCM-SIV, so this JS implementation
+    // cannot check the ciphertext -- but it CAN reconstruct the associated data,
+    // which is the component that was previously unpinned (a wrong-AAD
+    // implementation used to reproduce every vector). Header prefix is
+    // magic(4) | version(1) | nonce(12) | salt(16) | commitment(32); AAD is
+    // DOMAIN | "|hdr|" | prefix | MEMH | u64(epoch).  (See core.py _aad.)
+    if (c.aad_hex) {
+      const MAGIC = Buffer.from(vectors.envelope_magic, 'ascii');   // "SCE4"
+      const version = Buffer.from([mh.length === 32 ? 4 : 4]);       // VERSION = 4
+      const nonce = Buffer.from(c.nonce_hex, 'hex');
+      const salt = Buffer.from(c.salt_hex, 'hex');
+      const prefix = Buffer.concat([MAGIC, version, nonce, salt, commitment]);
+      const aad = Buffer.concat([DOMAIN, Buffer.from('|hdr|'), prefix, mh, u64be(c.epoch_id)]);
+      checks.push(['AAD', aad.toString('hex') === c.aad_hex]);
+    }
+
     const ok = checks.every(([, v]) => v);
     ok ? pass++ : fail++;
     const detail = checks.map(([n, v]) => `${n}:${v ? 'ok' : 'MISMATCH'}`).join('  ');
