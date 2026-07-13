@@ -209,6 +209,16 @@ def unseal_state_chunked(
     container = _require_envelope_bytes(container, "stream container")
     stream_id, n, seg_size, total_len = _parse_stream_header(container)
 
+    # A valid container always seals at least one segment -- the producer forces
+    # this, and SPEC 9.2 requires L == 0 to be carried by exactly one segment
+    # sealing an empty state. Without this guard a header-only blob claiming
+    # n == 0 would return b"" having performed NO cryptographic verification: an
+    # unauthenticated forgery of the fail-closed contract. Reject it structurally.
+    if n == 0:
+        raise MalformedEnvelope("container declares zero segments")
+    if total_len == 0 and n != 1:
+        raise MalformedEnvelope("an empty state must be carried by exactly one segment")
+
     # Guard against an absurd declared segment count forcing a long loop: each
     # segment needs at least its length frame plus one byte.
     max_possible = (len(container) - _STREAM_HEADER.size) // (_SEG_FRAME.size + 1)
