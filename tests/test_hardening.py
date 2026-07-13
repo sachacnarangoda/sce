@@ -361,6 +361,30 @@ def test_python_reproduces_the_known_answer_vectors():
         assert k_enc.hex() == case["k_enc_hex"], f"case {i}: K_enc drifted"
         assert commitment.hex() == case["key_commitment_hex"], f"case {i}: commitment drifted"
 
+        # AAD + full-envelope known answer. The prior vectors stopped at k_enc and
+        # commitment, so an implementation that mis-built the AAD (wrong domain
+        # label, MEMH/epoch transposed, dropped separator, wrong header order)
+        # would reproduce every vector yet emit envelopes this reference cannot
+        # open. Pinning the nonce makes the AAD and the whole envelope a known
+        # answer that closes that gap.
+        if "envelope_hex" in case:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
+            salt = bytes.fromhex(case["salt_hex"])
+            nonce = bytes.fromhex(case["nonce_hex"])
+            pt = case["plaintext_utf8"].encode("utf-8")
+            prefix = core._HEADER_PREFIX.pack(core._MAGIC, core._VERSION, nonce, salt, commitment)
+            aad = core._aad(prefix, man.memh(), case["epoch_id"])
+            assert aad.hex() == case["aad_hex"], f"case {i}: AAD drifted"
+            ct = AESGCMSIV(k_enc).encrypt(nonce, pt, aad)
+            env = prefix + core._CTLEN.pack(len(ct)) + ct
+            assert env.hex() == case["envelope_hex"], f"case {i}: full envelope drifted"
+            # and it must actually open back to the plaintext
+            assert unseal_state(env, man,
+                                master_secret=bytes.fromhex(case["master_secret_hex"]),
+                                epoch_id=case["epoch_id"],
+                                context=case["context_utf8"].encode("utf-8")) == pt, \
+                f"case {i}: pinned envelope does not round-trip"
+
 
 # =============================== 5. immutability ========================== #
 def test_manifest_extra_cannot_be_mutated_after_construction():
