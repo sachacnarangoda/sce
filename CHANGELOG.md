@@ -5,7 +5,61 @@ versioning; the envelope wire version (e.g. `SCE3`) is bumped whenever the
 on-wire format or the key derivation changes, so envelopes from different
 versions are intentionally incompatible and fail closed rather than mixing.
 
-## [0.4.3] — 2026-07-12
+## [0.4.4] — 2026-07-13
+
+A security fix plus an error-model fix and documentation precisions were identified. 
+**No wire change and no key-derivation change** —
+the magic stays `SCE4`, `test_vectors.json` is unchanged, and the cross-language
+verifier still reproduces every vector byte-for-byte, so every legitimately
+sealed envelope and container round-trips exactly as before. This is therefore a
+patch release: the only behavioural change is that a previously-accepted forgery
+is now correctly refused.
+
+### Fixed — a no-secret forgery of the stream layer's fail-closed contract
+- **A zero-segment container is no longer accepted.** `unseal_state_chunked`
+  previously returned `b""` for a header-only container claiming `num_segments = 0`
+  **having performed no cryptographic verification** — an attacker with no key
+  could manufacture a byte string the unsealer accepted, and it violated the SPEC
+  §9.2 rule that an empty state (`L = 0`) is carried by exactly one segment. The
+  producer always honoured that rule; the unsealer never enforced it. It now
+  rejects `n == 0`, and rejects `L == 0` with `n != 1`, as `MalformedEnvelope`.
+  Regression tests reproduce the forgery attempt and confirm it is refused, while
+  a legitimately sealed empty state still round-trips. (`sce/stream.py`,
+  `tests/test_stream.py`.)
+
+### Fixed — uniform-error-model violation
+- **Oversized length-prefixed fields now raise `SCEError`, not a raw
+  `OverflowError`.** A `context` (or manifest field, or stream context) at or above
+  2³² bytes hit `len(b).to_bytes(4, "big")` and escaped as a bare `OverflowError`,
+  breaking the "only `SCEError` escapes a public entry point" contract that callers'
+  `except SCEError` handling relies on. Guarded at both length-prefix chokepoints —
+  the manifest-field encoder and the generic helper — plus an explicit bound on
+  `context` at the seal/unseal entry points. Practically unreachable (~4 GiB), but
+  the contract now holds on every length-prefixed path. (`sce/core.py`.)
+
+### Documentation — corrected claims and a promoted boundary
+- **Manifest completeness is now a first-class security boundary**, not a usability
+  aside. SCE binds to the *manifest it is given*, not to the true execution
+  environment, and cannot detect a numerics-affecting factor (a cuBLAS/cuDNN
+  point-release, an A100-vs-H100 difference folded under one `tensor_parallel`
+  string, a driver flag, a flash-attention-vs-eager swap) that the caller omitted —
+  in which case two different environments hash to the same fingerprint and stale
+  state resumes silently, the exact failure SCE exists to prevent. Stated in
+  `SPEC.md` §11.2 (leading bullet) and the README **Boundaries** section, including
+  that `weights_hash` is an unverified caller-supplied label.
+- **The key commitment is scoped honestly** as defence-in-depth under the shipped
+  static-secret design (the AAD already binds the environment independently, and
+  callers cannot choose keys), becoming load-bearing only under the planned
+  DH-derived keying. Stated in `sce/core.py` and `SPEC.md` §11.1(3).
+- **Wording precisions:** the commitment is *computationally* hiding (a PRF
+  assumption, not information-theoretic); the GCM-SIV nonce-repeat characterisation
+  now cites RFC 8452 §9's usage limits rather than an under-stated "at worst";
+  the chunked container is noted to expose *exact* plaintext length in its header
+  (a richer shape fingerprint than a bare envelope); and a reimplementer note makes
+  explicit that `ciphertext = envelope[69:]` (all trailing bytes), never
+  `envelope[69:69+ct_len]`.
+
+
 
 Documentation only. No code behaviour change, no wire change, no API change, no
 change to `test_vectors.json`. **It corrects an over-stated security claim**, which
