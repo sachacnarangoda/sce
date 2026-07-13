@@ -17,15 +17,27 @@ raises about v1:
      GCM.  Because K_epoch is a long-lived key (derived from the master secret
      and the environment, reused across many seals), an accidental nonce repeat
      under plain GCM would be catastrophic (auth-key recovery -> forgery).  Under
-     GCM-SIV a nonce repeat is not catastrophic: it degrades gracefully, at worst
-     revealing that two (identical-nonce) plaintexts were equal.
+     GCM-SIV a nonce repeat is not catastrophic: it degrades gracefully. A
+     repeated (key, nonce) leaks whether two plaintexts were equal and, per
+     RFC 8452 s9, erodes the forgery bound as the number of repetitions grows
+     (hence that RFC's usage limits) -- not the total auth-key compromise plain
+     GCM suffers. In v4 a repeat needs BOTH a salt and a nonce collision, so
+     this is academic; the point is the failure is graceful, not cliff-edged.
 
-  2. Key commitment.  Plain AEADs are not key-committing: one ciphertext can be
-     made to open under two different keys, which would quietly defeat the
-     "this state belongs to exactly one environment" guarantee.  SCE derives a
-     separate commitment from the key material, stores it, binds it into the
-     associated data, and verifies it in constant time before trusting a
-     decryption.  A ciphertext is therefore bound to exactly one environment.
+  2. Key commitment.  Plain AEADs are not key-committing: given the ability to
+     choose keys, one ciphertext can be made to open under two different keys
+     (the basis of partitioning-oracle / Invisible-Salamanders attacks).  SCE
+     derives a separate commitment from the key material, stores it, binds it
+     into the associated data, and verifies it in constant time before trusting
+     a decryption, so a ciphertext is bound to exactly one key.
+     HONEST SCOPING: in the *shipped static-secret* design the environment is
+     ALREADY bound independently through the AAD (which carries MEMH and epoch),
+     so a wrong environment fails closed on the tag alone -- the commitment is
+     defence-in-depth here, not the load-bearing control, because the caller
+     cannot choose keys (nonces, salts, and keys are all internal). The
+     commitment becomes genuinely load-bearing under the *future* DH-derived
+     keying, where a client-supplied DH share is an attacker-influenceable
+     key input; it is implemented now so that design needs no wire change.
 
   3. Strict canonicalisation.  The environment fingerprint (MEMH) is computed
      over a rigorous, length-prefixed, NFC-normalised encoding of the manifest,
@@ -159,6 +171,7 @@ _CTLEN = struct.Struct(">I")
 # an oversize state fails with a clean SCEError, not a raw struct.error deep in the
 # pack call. (The AEAD's own 2**36-byte limit is far higher; this frame binds first.)
 _MAX_STATE = (1 << 32) - 1 - _TAG_LEN     # ciphertext = plaintext + 16-byte tag
+_MAX_LP_FIELD = (1 << 32) - 1             # any 4-byte length-prefixed field (context, extras)
 
 _MISMATCH_MESSAGE = "sealed state could not be opened under the presented environment"
 
@@ -208,6 +221,8 @@ def _enc_str(label: str, value: Any) -> bytes:
     if not isinstance(value, str):
         raise SCEError(f"manifest field {label!r} must be a str, got {type(value).__name__}")
     b = unicodedata.normalize("NFC", value).encode("utf-8")
+    if len(b) > _MAX_LP_FIELD:
+        raise SCEError(f"manifest field {label!r} exceeds the 4-byte length-prefix limit")
     return len(b).to_bytes(4, "big") + b
 
 
@@ -363,8 +378,12 @@ def _lp(b: bytes) -> bytes:
 
     The same discipline used by the manifest canonicaliser. Applying it to every
     field of a composite input makes that input unambiguous by construction: no
-    two distinct field tuples can serialise to the same byte string.
+    two distinct field tuples can serialise to the same byte string. Oversize
+    input raises SCEError rather than a raw OverflowError, so the "only SCEError
+    escapes a public entry point" contract holds on every length-prefixed path.
     """
+    if len(b) > _MAX_LP_FIELD:
+        raise SCEError("length-prefixed field exceeds the 4-byte limit (~4 GiB)")
     return len(b).to_bytes(4, "big") + b
 
 
@@ -490,6 +509,8 @@ def seal_state(
         )
     if not isinstance(context, (bytes, bytearray)):
         raise SCEError("context must be bytes")
+    if len(context) > _MAX_LP_FIELD:
+        raise SCEError("context exceeds the 4-byte length-prefix limit (~4 GiB)")
     if seal_count is not None:
         if not isinstance(seal_count, int) or isinstance(seal_count, bool) or seal_count < 0:
             raise SCEError("seal_count must be a non-negative integer or None")
@@ -554,6 +575,8 @@ def unseal_state(
     _require_manifest(manifest)
     if not isinstance(context, (bytes, bytearray)):
         raise SCEError("context must be bytes")
+    if len(context) > _MAX_LP_FIELD:
+        raise SCEError("context exceeds the 4-byte length-prefix limit (~4 GiB)")
     _check_epoch(epoch_id)
 
     prefix, fields, ciphertext = _parse(sealed)
