@@ -180,6 +180,22 @@ def canary_known_answer_vectors(mod):
         )
         assert k_enc.hex() == case["k_enc_hex"], f"case {i} k_enc"
         assert commitment.hex() == case["key_commitment_hex"], f"case {i} commitment"
+        # AAD + full envelope. Without this, the KAT canary stops at the derived
+        # keys, so a SEMANTIC error in the associated data or the wire encoding
+        # (transposed AAD fields, reversed length endianness) leaves k_enc and
+        # commitment untouched and slips through every canary. Verifying the
+        # pinned AAD and envelope closes that blind spot.
+        if "envelope_hex" in case:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
+            nonce = bytes.fromhex(case["nonce_hex"])
+            pt = case["plaintext_utf8"].encode("utf-8")
+            prefix = mod._HEADER_PREFIX.pack(mod._MAGIC, mod._VERSION, nonce,
+                                             bytes.fromhex(case["salt_hex"]), commitment)
+            aad = mod._aad(prefix, man.memh(), case["epoch_id"])
+            assert aad.hex() == case["aad_hex"], f"case {i} aad"
+            ct = AESGCMSIV(k_enc).encrypt(nonce, pt, aad)
+            env = prefix + mod._CTLEN.pack(len(ct)) + ct
+            assert env.hex() == case["envelope_hex"], f"case {i} envelope"
 
 
 CANARIES = (
@@ -245,6 +261,36 @@ MUTATIONS = [
         "items = sorted(",
         "items = (lambda x, key=None: list(x))(",
         True,
+    ),
+    # --- semantic mutations: WRONG logic rather than MISSING logic. These model
+    # realistic maintenance errors (a refactor that transposes fields, reverses
+    # an endianness, or truncates a value) rather than a deleted security check.
+    # All are caught only because the known-answer canary pins the derived keys,
+    # the AAD, and the full envelope; a suite that tested round-trips alone would
+    # miss every one of them, since each keeps seal/unseal self-consistent.
+    (
+        "swap_context_and_memh_in_kdf",
+        "        + _lp(context)\n        + _lp(epoch_id.to_bytes(8, \"big\"))\n        + _lp(memh)",
+        "        + _lp(memh)\n        + _lp(epoch_id.to_bytes(8, \"big\"))\n        + _lp(context)",
+        True,   # reorders the KDF input -> different K_enc -> caught by KAT
+    ),
+    (
+        "transpose_memh_and_epoch_in_aad",
+        'return _DOMAIN + b"|hdr|" + header_prefix + memh + epoch_id.to_bytes(8, "big")',
+        'return _DOMAIN + b"|hdr|" + header_prefix + epoch_id.to_bytes(8, "big") + memh',
+        True,   # AAD-only change: k_enc/commitment untouched, caught by pinned AAD
+    ),
+    (
+        "reverse_ciphertext_length_endianness",
+        '_CTLEN = struct.Struct(">I")',
+        '_CTLEN = struct.Struct("<I")',
+        True,   # wire-encoding-only change, caught by the pinned full envelope
+    ),
+    (
+        "truncate_memh_to_16_bytes",
+        "hashlib.sha3_256(self.canonical_bytes()).digest()",
+        "hashlib.sha3_256(self.canonical_bytes()).digest()[:16]",
+        True,   # halves the fingerprint -> memh mismatch -> caught by KAT
     ),
     (
         "downgrade_constant_time_compare",
