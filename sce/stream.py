@@ -26,8 +26,8 @@ Because `context` feeds the key derivation, a segment sealed at index i of n can
 only be opened when the unsealer reconstructs that exact
 (user_context, stream_id, i, n, L, C). The container header carries stream_id,
 n, C and L in the clear; it needs no separate MAC, because any change to those
-values makes every segment fail to derive its key -- the header is authenticated
-"by consequence". The envelope wire format (SCE4) is unchanged: each segment is a
+values makes every segment fail to derive its key -- the header is
+cryptographically bound into per-segment key derivation. The envelope wire format (SCE4) is unchanged: each segment is a
 normal, unlinkable v4 envelope, so this layer required no re-audit of the seal.
 
 Memory
