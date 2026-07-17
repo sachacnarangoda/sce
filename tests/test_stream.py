@@ -369,6 +369,39 @@ def test_oversize_context_raises_sceerror_not_overflow():
         raise AssertionError("oversize length-prefixed field did not raise SCEError")
 
 
+def test_wrong_segment_index_derivation_fails_closed():
+    """Semantic-mutation test for the stream layer: if the per-segment context
+    were derived with the WRONG index (a plausible off-by-one maintenance error),
+    a validly-sealed container must fail closed on unseal rather than silently
+    accept. The sabotage suite mutates core.py only, so this models the same class
+    of 'wrong logic, not missing logic' error in the stream binding directly, by
+    monkeypatching the index that goes into the segment context at unseal time.
+    """
+    container = seal_state_chunked(b"A" * 500, base_manifest(),
+                                   master_secret=MASTER, segment_size=150)
+    # sanity: it opens correctly with the real derivation
+    assert unseal_state_chunked(container, base_manifest(), master_secret=MASTER) == b"A" * 500
+
+    real = stream._seg_context
+
+    def wrong_index(user_context, stream_id, index, num_segments, total_len, segment_size):
+        # off-by-one on the index -- exactly the maintenance error being modelled
+        return real(user_context, stream_id, index + 1, num_segments, total_len, segment_size)
+
+    stream._seg_context = wrong_index
+    try:
+        try:
+            unseal_state_chunked(container, base_manifest(), master_secret=MASTER)
+        except StateSealMismatch:
+            pass  # correct: wrong index -> wrong key -> fails closed
+        else:
+            raise AssertionError("wrong segment index did not fail closed")
+    finally:
+        stream._seg_context = real
+    # and the real derivation still works afterwards (no global corruption)
+    assert unseal_state_chunked(container, base_manifest(), master_secret=MASTER) == b"A" * 500
+
+
 def main():
     tests = [obj for name, obj in sorted(globals().items())
              if name.startswith("test_") and callable(obj)]
