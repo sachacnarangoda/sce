@@ -5,10 +5,48 @@ versioning; the envelope wire version (e.g. `SCE3`) is bumped whenever the
 on-wire format or the key derivation changes, so envelopes from different
 versions are intentionally incompatible and fail closed rather than mixing.
 
+## [0.4.6] — 2026-07-17
+
+Verification-strengthening and specification-precision release from a fourth
+independent cold review (a different model family). **No code-behaviour change,
+no wire change, no API change, no change to `test_vectors.json`** — this hardens
+the *test suite* and tightens the *specification*, not the primitive. The review
+found no cryptographic break; these changes address its recommendations.
+
+### Improved — the sabotage suite now catches semantic errors, not just removals
+- **Four semantic mutations added**, modelling realistic maintenance mistakes
+  (wrong logic) rather than deleted checks (missing logic): swapping two fields in
+  the KDF input, transposing `MEMH`/epoch in the AAD, reversing the ciphertext-
+  length endianness, and truncating `MEMH`. The suite grows from 9 to 13 mutations.
+- **Closing the blind spot that made two of them possible:** the known-answer
+  canary previously stopped at `K_enc`/`commitment`/`MEMH`, so a semantic error in
+  the *associated data* or the *wire encoding* left those values untouched and
+  slipped through every canary. The canary now also verifies the pinned AAD and the
+  full envelope (using the fields pinned in 0.4.5), so the AAD-transposition and
+  endianness mutations are genuinely caught. (`tests/test_sabotage.py`.)
+- **A stream-layer semantic test**: a validly-sealed container, unsealed with a
+  deliberately off-by-one segment-index derivation, must fail closed — the same
+  "wrong logic" class checked directly in the chunked layer. (`tests/test_stream.py`.)
+
+### Specification — precision, per the review
+- **"Authenticated by consequence" replaced** with the more precise "cryptographically
+  bound into per-segment key derivation," which describes the actual mechanism: the
+  container header is not covered by a MAC, but is an input to each segment's key
+  derivation, so tampering with it causes an AEAD authentication failure.
+  (`SPEC.md` §10, `sce/stream.py`.)
+- **A normative "Security assumptions" subsection** (`SPEC.md` §2.2) collects the
+  reductions the design relies on — HKDF-as-KDF, SHA3 collision/preimage resistance,
+  AES-256-GCM-SIV IND-CCA2/INT-CTXT with nonce-misuse resistance, a high-entropy
+  `master_secret`, and a secure RNG — so the argument can be checked in one place.
+- The commitment's binding language was already scoped to *computational* in 0.4.4;
+  no further change was needed there.
+
+
+
 ## [0.4.5] — 2026-07-13
 
-A conformance fix and two interoperability/precision improvements. 
-**No wire change and no key-derivation change** — the
+A conformance fix and two interoperability/precision improvements from a third
+independent cold review. **No wire change and no key-derivation change** — the
 magic stays `SCE4` and every existing derived value in `test_vectors.json` is
 byte-identical; the vectors only *gain* pinned fields. Patch release.
 
@@ -47,6 +85,8 @@ byte-identical; the vectors only *gain* pinned fields. Patch release.
   normalisation and key-ordering to a known answer. (`SPEC.md`, `test_vectors.json`.)
 
 
+
+## [0.4.4] — 2026-07-13
 
 A security fix plus an error-model fix and documentation precisions surfaced by
 two independent cold reviews. **No wire change and no key-derivation change** —
@@ -101,6 +141,8 @@ is now correctly refused.
   `envelope[69:69+ct_len]`.
 
 
+
+## [0.4.3] — 2026-07-12
 
 Documentation only. No code behaviour change, no wire change, no API change, no
 change to `test_vectors.json`. **It corrects an over-stated security claim**, which
