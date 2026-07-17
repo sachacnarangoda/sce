@@ -61,6 +61,20 @@ Implementations MUST use exactly these primitives. AES-256-GCM-SIV is chosen for
 
 ---
 
+### 2.2 Security assumptions
+
+The security properties in §11 hold under the following assumptions. They are collected here so the argument can be checked in one place; each is standard for the primitives used.
+
+1. **HKDF-SHA3-256 is a secure KDF** — its extract-then-expand output is computationally indistinguishable from independent uniform random bytes given a high-entropy input keying material and a distinct `(salt, info)`. This underlies key separation between environments and the independence of `K_enc` from the committed half.
+2. **SHA3-256 is collision-resistant and preimage-resistant.** This underlies the injectivity of the manifest canonicalisation and the KDF `info` encoding (a distinct manifest or `info` yields a distinct hash), and the binding property of the commitment (a second valid opening would require a collision on the committed key half).
+3. **AES-256-GCM-SIV provides IND-CCA2 confidentiality and INT-CTXT integrity** under a per-`(key, nonce)`-unique invocation, and is nonce-misuse-resistant (a repeated `(key, nonce)` degrades gracefully — leaking only equality of identical plaintexts and eroding the forgery bound with the number of repetitions, per RFC 8452 §9 — rather than catastrophically).
+4. **The `master_secret` is high-entropy key material** from a CSPRNG or a KMS/HSM (≥ 128 bits of true entropy). The primitive derives all keys from it; a low-entropy or guessable secret defeats every guarantee.
+5. **`random(n)` is a cryptographically secure RNG.** Per-seal salt and nonce uniqueness — on which unlinkability and the single-use-key posture of assumption 3 depend — follow from this.
+
+Assumptions 1–3 are the cryptographic reductions; 4–5 are deployment obligations on the caller. Separately, and not a cryptographic assumption at all, is the **manifest-completeness** trust boundary of §11.2: SCE binds to the manifest it is given, not the true execution environment, and cannot detect a numerics-affecting factor the caller omitted.
+
+---
+
 ## 3. Constants
 
 The following block is normative and is machine-checked against the implementation by `tests/test_hardening.py::test_spec_constants_match_the_implementation`. Byte strings are hex; lengths are decimal byte counts.
@@ -299,7 +313,7 @@ envelope_i = seal(state[i·C : min((i+1)·C, L)], M, master_secret,
 
 Because `context` feeds the key derivation (§5), a segment opens **only** when the unsealer reconstructs its exact position in its exact stream. Consequently, reordering, dropping, duplicating, truncating, extending, or splicing a segment from another stream all fail closed.
 
-The container header therefore needs **no MAC of its own**: it is authenticated *by consequence*. Any change to `stream_id`, `n`, `C` or `L` makes every segment fail to derive its key.
+The container header therefore needs **no MAC of its own**: it is **cryptographically bound into per-segment key derivation**. This is a stronger and more precise statement than "authenticated by consequence": the header fields are not authenticated by a tag computed over the header, but are inputs to each segment's key derivation, so any change to `stream_id`, `n`, `C` or `L` changes the reconstructed per-segment context, hence the derived key, hence causes an AEAD authentication failure before any segment is released.
 
 - A container with `L = 0` MUST contain exactly one segment, itself sealing an empty state.
 - `segment_size` MUST be a positive integer not exceeding a single envelope's capacity.
